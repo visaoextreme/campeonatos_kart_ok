@@ -90,6 +90,10 @@ def tenant_table(table_name: str):
 # =============================================================================
 @app.after_request
 def add_security_headers(response):
+    # Se o tipo de conteúdo vier como texto simples, forçamos a ser HTML:
+    if response.mimetype == 'text/plain':
+        response.mimetype = 'text/html'
+
     # Evite 'unsafe-inline' em produção se quiser CSP mais rígido;
     # Aqui está mantido para não quebrar scripts inline já existentes.
     response.headers["Content-Security-Policy"] = (
@@ -298,10 +302,10 @@ def checa_inscricoes_fechadas(campeonato: Dict[str, Any]) -> bool:
                 dt_primeira = parse_date(primeira_bateria)
                 if datetime.datetime.now() >= dt_primeira:
                     return True
-        # Se já atingiu o número máximo
     except Exception as e:
         logging.warning(f"Erro ao checar baterias: {e}")
 
+    # Se já atingiu o número máximo
     try:
         part_resp = tenant_table("participacoes").select("user_id").eq("campeonato_id", campeonato["id"]).execute()
         inscritos = part_resp.data or []
