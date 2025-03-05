@@ -65,6 +65,27 @@ os.makedirs(UPLOAD_FOLDER, exist_ok=True)
 app.config["UPLOAD_FOLDER"] = UPLOAD_FOLDER
 
 # =============================================================================
+# BEFORE REQUEST – Captura de tenant (kart_id)
+# =============================================================================
+@app.before_request
+def set_tenant():
+    kart_id = request.args.get("kart_id")
+    if kart_id:
+        session["kartodromo_id"] = kart_id
+
+# =============================================================================
+# Helper de Multi-Tenancy
+# =============================================================================
+def apply_tenant_filter(query):
+    tenant_id = session.get("kartodromo_id")
+    if tenant_id:
+        query = query.eq("kartodromo_id", tenant_id)
+    return query
+
+def tenant_table(table_name: str):
+    return apply_tenant_filter(supabase.table(table_name))
+
+# =============================================================================
 # HEADERS DE SEGURANÇA – Exemplo de Content-Security-Policy (CSP)
 # =============================================================================
 @app.after_request
@@ -252,7 +273,7 @@ def checa_inscricoes_fechadas(campeonato: Dict[str, Any]) -> bool:
     - Já atingiu o número máximo de participantes.
     """
     try:
-        status_resp = supabase.table("campeonato_inscricoes_status").select("status").eq("campeonato_id", campeonato["id"]).execute()
+        status_resp = tenant_table("campeonato_inscricoes_status").select("status").eq("campeonato_id", campeonato["id"]).execute()
         if status_resp.data and status_resp.data[0].get("status") == "fechado":
             return True
     except Exception as e:
@@ -269,7 +290,7 @@ def checa_inscricoes_fechadas(campeonato: Dict[str, Any]) -> bool:
 
     # Se a primeira bateria já começou
     try:
-        bat_resp = supabase.table("baterias_kart_1").select("data_hora_inicio").eq("campeonato_id", campeonato["id"]).order("data_hora_inicio").execute()
+        bat_resp = tenant_table("baterias_kart_1").select("data_hora_inicio").eq("campeonato_id", campeonato["id"]).order("data_hora_inicio").execute()
         baterias = bat_resp.data or []
         if baterias:
             primeira_bateria = baterias[0].get("data_hora_inicio")
@@ -277,12 +298,12 @@ def checa_inscricoes_fechadas(campeonato: Dict[str, Any]) -> bool:
                 dt_primeira = parse_date(primeira_bateria)
                 if datetime.datetime.now() >= dt_primeira:
                     return True
+        # Se já atingiu o número máximo
     except Exception as e:
         logging.warning(f"Erro ao checar baterias: {e}")
 
-    # Se já atingiu o número máximo
     try:
-        part_resp = supabase.table("participacoes").select("user_id").eq("campeonato_id", campeonato["id"]).execute()
+        part_resp = tenant_table("participacoes").select("user_id").eq("campeonato_id", campeonato["id"]).execute()
         inscritos = part_resp.data or []
         if inscritos and len(inscritos) >= campeonato.get("max_participantes", 0):
             return True
@@ -294,7 +315,7 @@ def checa_inscricoes_fechadas(campeonato: Dict[str, Any]) -> bool:
 def contar_baterias(campeonato_id: str) -> (int, int):
     """ Retorna (baterias_finalizadas, baterias_restantes) """
     try:
-        bat_resp = supabase.table("baterias_kart_1").select("status").eq("campeonato_id", campeonato_id).execute()
+        bat_resp = tenant_table("baterias_kart_1").select("status").eq("campeonato_id", campeonato_id).execute()
         baterias = bat_resp.data or []
         feitas = sum(1 for b in baterias if b.get("status") == "finalizada")
         total = len(baterias)
@@ -352,7 +373,7 @@ def atualiza_status_baterias(baterias: List[Dict[str, Any]]) -> None:
                 new_status = "finalizada"
 
             if bat.get("status") != new_status:
-                supabase.table("baterias_kart_1").update({"status": new_status}).eq("id", bat["id"]).execute()
+                tenant_table("baterias_kart_1").update({"status": new_status}).eq("id", bat["id"]).execute()
                 bat["status"] = new_status
         except Exception as e:
             logging.warning(f"Erro ao atualizar status da bateria {bat.get('id')}: {e}")
@@ -646,7 +667,7 @@ def login_get():
         return redirect(url_for("login_get"))
 
     try:
-        profile_resp = supabase.table("profiles").select("*").eq("email", email).execute()
+        profile_resp = tenant_table("profiles").select("*").eq("email", email).execute()
         if not profile_resp.data or len(profile_resp.data) == 0:
             flash("Usuário não encontrado. Verifique seu email ou cadastre-se.", "warning")
             return redirect(url_for("register_route"))
@@ -727,7 +748,7 @@ def recover_password():
         return redirect(request.url)
 
     try:
-        profile_resp = supabase.table("profiles").select("id, nome, email").eq("email", email).execute()
+        profile_resp = tenant_table("profiles").select("id, nome, email").eq("email", email).execute()
         if not profile_resp.data or len(profile_resp.data) == 0:
             flash("Nenhum usuário encontrado com esse email.", "warning")
             return redirect(request.url)
@@ -825,7 +846,7 @@ def reset_password(token: str):
         return redirect(url_for("reset_password", token=token))
 
     try:
-        supabase.table("profiles").update({"password": generate_password_hash(new_password)}).eq("id", user_id).execute()
+        tenant_table("profiles").update({"password": generate_password_hash(new_password)}).eq("id", user_id).execute()
         flash("Senha redefinida com sucesso! Faça login com sua nova senha.", "success")
         return redirect(url_for("login_get"))
     except Exception as e:
@@ -1009,18 +1030,18 @@ def register_route() -> Any:
         return redirect(request.url)
 
     try:
-        existing = supabase.table("profiles").select("*").eq("email", email).execute()
+        existing = tenant_table("profiles").select("*").eq("email", email).execute()
         if existing.data and len(existing.data) > 0:
             flash("Email já cadastrado. Faça login ou recupere sua senha.", "warning")
             return redirect(url_for("login_get"))
 
-        existing_cpf = supabase.table("profiles").select("*").eq("cpf", cpf_formatado).execute()
+        existing_cpf = tenant_table("profiles").select("*").eq("cpf", cpf_formatado).execute()
         if existing_cpf.data and len(existing_cpf.data) > 0:
             flash(Markup(f"CPF já cadastrado. Se esqueceu seu email? <a href='/recover_email?cpf={cpf_formatado}'>Clique aqui</a>"), "warning")
             return redirect(url_for("register_route"))
 
         user_id = str(uuid.uuid4())
-        count_resp = supabase.table("profiles").select("id", count="exact").eq("role", "client").execute()
+        count_resp = tenant_table("profiles").select("id", count="exact").eq("role", "client").execute()
         pilot_count = count_resp.count if hasattr(count_resp, "count") and count_resp.count is not None else len(count_resp.data or [])
         display_id = f"#{pilot_count + 1:02d}"
 
@@ -1036,10 +1057,11 @@ def register_route() -> Any:
             "idade": None,
             "descricao": "",
             "nivel": "Iniciante",
-            "pontos": 0
+            "pontos": 0,
+            "kartodromo_id": session.get("kartodromo_id")
         }
 
-        result = supabase.table("profiles").insert(profile_data).execute()
+        result = tenant_table("profiles").insert(profile_data).execute()
         if not result.data:
             flash("Não foi possível criar o usuário. Por favor, tente novamente.", "danger")
             return redirect(request.url)
@@ -1059,7 +1081,7 @@ def recover_email():
             cpf = cpf.strip()
             cpf_formatted = format_cpf(cpf)
             try:
-                profile_resp = supabase.table("profiles").select("email").eq("cpf", cpf_formatted).execute()
+                profile_resp = tenant_table("profiles").select("email").eq("cpf", cpf_formatted).execute()
                 if profile_resp.data and len(profile_resp.data) > 0:
                     full_email = profile_resp.data[0]["email"]
                     parts = full_email.split("@")
@@ -1151,7 +1173,7 @@ def recover_email():
             flash("CPF é obrigatório.", "danger")
             return redirect(request.url)
         try:
-            profile_resp = supabase.table("profiles").select("email").eq("cpf", format_cpf(cpf)).execute()
+            profile_resp = tenant_table("profiles").select("email").eq("cpf", format_cpf(cpf)).execute()
             if not profile_resp.data or len(profile_resp.data) == 0:
                 flash("Nenhum usuário encontrado com esse CPF.", "warning")
                 return redirect(request.url)
@@ -1283,12 +1305,12 @@ def change_password():
         return redirect(url_for("change_password"))
 
     try:
-        profile_resp = supabase.table("profiles").select("password").eq("id", user_id).execute()
+        profile_resp = tenant_table("profiles").select("password").eq("id", user_id).execute()
         if not profile_resp.data or not check_password_hash(profile_resp.data[0]["password"], current_password):
             flash("Senha atual incorreta.", "danger")
             return redirect(url_for("change_password"))
 
-        supabase.table("profiles").update({"password": generate_password_hash(new_password)}).eq("id", user_id).execute()
+        tenant_table("profiles").update({"password": generate_password_hash(new_password)}).eq("id", user_id).execute()
         flash("Senha alterada com sucesso!", "success")
         return redirect(url_for("dashboard_full"))
     except Exception as e:
@@ -1341,7 +1363,7 @@ def send_delete_confirmation_email(to_email: str, token: str, user_name: str):
 def delete_profile():
     user_id = session.get("user_id")
     try:
-        profile_resp = supabase.table("profiles").select("nome, email").eq("id", user_id).execute()
+        profile_resp = tenant_table("profiles").select("nome, email").eq("id", user_id).execute()
         if not profile_resp.data:
             flash("Perfil não encontrado.", "warning")
             return redirect(url_for("piloto_perfil"))
@@ -1423,7 +1445,7 @@ def confirm_delete(token: str):
         return redirect(url_for("select_role"))
 
     try:
-        supabase.table("profiles").delete().eq("id", user_id).execute()
+        tenant_table("profiles").delete().eq("id", user_id).execute()
         session.clear()
         flash("Seu perfil foi excluído com sucesso.", "success")
     except Exception as e:
@@ -1446,7 +1468,7 @@ def atualizar_pontos_piloto(user_id: str):
     Soma todos os pontos de 'battery_registrations' e atualiza em 'profiles'.
     """
     try:
-        resp = supabase.table("battery_registrations").select("posicao").eq("user_id", user_id).execute()
+        resp = tenant_table("battery_registrations").select("posicao").eq("user_id", user_id).execute()
         regs = resp.data or []
         total = 0
         for reg in regs:
@@ -1454,7 +1476,7 @@ def atualizar_pontos_piloto(user_id: str):
             if pos is not None:
                 total += calculate_battery_points(pos)
         # Atualiza no profiles
-        supabase.table("profiles").update({"pontos": total}).eq("id", user_id).execute()
+        tenant_table("profiles").update({"pontos": total}).eq("id", user_id).execute()
     except Exception as e:
         logging.error(f"Erro ao atualizar pontos do piloto: {e}")
 
@@ -1472,7 +1494,7 @@ def inscrever_piloto() -> Any:
         return jsonify({"error": "Dados incompletos para inscrição."}), 400
 
     try:
-        camp_resp = supabase.table("campeonatos_kart_1").select("*").eq("id", campeonato_id).execute()
+        camp_resp = tenant_table("campeonatos_kart_1").select("*").eq("id", campeonato_id).execute()
         if not camp_resp.data:
             return jsonify({"error": "Campeonato não encontrado."}), 404
         campeonato = camp_resp.data[0]
@@ -1483,7 +1505,7 @@ def inscrever_piloto() -> Any:
         return jsonify({"error": "Inscrições encerradas para este campeonato."}), 400
 
     try:
-        part_resp = supabase.table("participacoes").select("*").eq("campeonato_id", campeonato_id).eq("user_id", user_id).execute()
+        part_resp = tenant_table("participacoes").select("*").eq("campeonato_id", campeonato_id).eq("user_id", user_id).execute()
         if part_resp.data:
             return jsonify({"error": "Você já está inscrito neste campeonato."}), 400
     except Exception:
@@ -1491,7 +1513,7 @@ def inscrever_piloto() -> Any:
 
     # Verifica se atingiu max_participantes
     try:
-        part_count_resp = supabase.table("participacoes").select("*", count="exact").eq("campeonato_id", campeonato_id).execute()
+        part_count_resp = tenant_table("participacoes").select("*", count="exact").eq("campeonato_id", campeonato_id).execute()
         inscritos_count = len(part_count_resp.data) if part_count_resp.data else 0
         if inscritos_count >= campeonato.get("max_participantes", 0):
             return jsonify({"error": "Não há vagas disponíveis neste campeonato."}), 400
@@ -1499,11 +1521,13 @@ def inscrever_piloto() -> Any:
         pass
 
     try:
-        supabase.table("participacoes").insert({
+        participacao_data = {
             "campeonato_id": campeonato_id,
             "user_id": user_id,
-            "team_name": team_name
-        }).execute()
+            "team_name": team_name,
+            "kartodromo_id": session.get("kartodromo_id")
+        }
+        tenant_table("participacoes").insert(participacao_data).execute()
         return jsonify({"message": "Inscrição realizada com sucesso!"}), 200
     except Exception as e:
         return jsonify({"error": str(e)}), 400
@@ -1526,7 +1550,7 @@ def piloto_inscrever_bateria():
 
     # Verifica se a bateria existe
     try:
-        bat_resp = supabase.table("baterias_kart_1").select("*").eq("id", bateria_id).execute()
+        bat_resp = tenant_table("baterias_kart_1").select("*").eq("id", bateria_id).execute()
         if not bat_resp.data:
             return jsonify({"error": "Bateria não encontrada"}), 404
     except Exception as e:
@@ -1534,7 +1558,7 @@ def piloto_inscrever_bateria():
 
     # Verifica se já existe um registro do piloto nessa bateria
     try:
-        reg_resp = supabase.table("battery_registrations").select("*").eq("bateria_id", bateria_id).eq("user_id", user_id).execute()
+        reg_resp = tenant_table("battery_registrations").select("*").eq("bateria_id", bateria_id).eq("user_id", user_id).execute()
         if reg_resp.data:
             return jsonify({"error": "Você já está registrado nessa bateria"}), 400
     except Exception:
@@ -1543,12 +1567,13 @@ def piloto_inscrever_bateria():
     try:
         insert_data = {
             "user_id": user_id,
-            "bateria_id": bateria_id
+            "bateria_id": bateria_id,
+            "kartodromo_id": session.get("kartodromo_id")
         }
         if posicao is not None:
             insert_data["posicao"] = posicao
 
-        supabase.table("battery_registrations").insert(insert_data).execute()
+        tenant_table("battery_registrations").insert(insert_data).execute()
         # Após inserir, recalcula pontos do piloto
         atualizar_pontos_piloto(user_id)
         return jsonify({"message": "Inscrição na bateria realizada com sucesso!"}), 201
@@ -1559,7 +1584,9 @@ def piloto_inscrever_bateria():
 def feedback_route() -> Any:
     data = request.json
     try:
-        supabase.table("feedbacks").insert(data).execute()
+        # Adiciona o kartodromo_id ao feedback
+        data["kartodromo_id"] = session.get("kartodromo_id")
+        tenant_table("feedbacks").insert(data).execute()
         return jsonify({"message": "Feedback enviado com sucesso!"}), 201
     except Exception as e:
         return jsonify({"error": str(e)}), 400
@@ -1571,7 +1598,7 @@ def estatisticas_route() -> Any:
         return jsonify({"error": "CPF é obrigatório para consulta de estatísticas."}), 400
 
     try:
-        perfil_resp = supabase.table("profiles").select("id, nome, cpf, pontos").eq("cpf", cpf).execute()
+        perfil_resp = tenant_table("profiles").select("id, nome, cpf, pontos").eq("cpf", cpf).execute()
         if not perfil_resp.data:
             return jsonify({"error": "Nenhum piloto encontrado para este CPF."}), 404
 
@@ -1607,12 +1634,12 @@ def compartilhar_route() -> Any:
 def regras_route() -> Any:
     user_id = session.get("user_id")
     try:
-        profile_resp = supabase.table("profiles").select("role").eq("id", user_id).execute()
+        profile_resp = tenant_table("profiles").select("role").eq("id", user_id).execute()
         if not profile_resp.data:
             return jsonify({"error": "Profile não encontrado"}), 404
 
         data = request.json
-        supabase.table("regras").upsert(data).execute()
+        tenant_table("regras").upsert(data).execute()
         return jsonify({"message": "Regras atualizadas com sucesso!"}), 200
     except Exception as e:
         return jsonify({"error": str(e)}), 400
@@ -1642,7 +1669,7 @@ def admin_only_route() -> Any:
         if session.get("role") == "admin":
             return jsonify({"message": "Bem-vindo, Admin!"}), 200
 
-        profile_resp = supabase.table("profiles").select("*").eq("id", user_id).execute()
+        profile_resp = tenant_table("profiles").select("*").eq("id", user_id).execute()
         if not profile_resp.data:
             return jsonify({"error": "Profile não encontrado"}), 404
 
@@ -1663,17 +1690,17 @@ def dashboard_full() -> str:
     user_id = session.get("user_id")
 
     try:
-        bat_resp = supabase.table("baterias_kart_1").select("*").execute()
+        bat_resp = tenant_table("baterias_kart_1").select("*").execute()
         if bat_resp.data:
             atualiza_status_baterias(bat_resp.data)
     except Exception as e:
         logging.warning(f"Erro ao atualizar baterias no dashboard: {e}")
 
     try:
-        campeonatos_resp = supabase.table("campeonatos_kart_1").select("id, nome, data_inicio, data_fim").execute()
-        baterias_resp = supabase.table("baterias_kart_1").select("id, status").execute()
-        participacoes_resp = supabase.table("participacoes").select("id").execute()
-        feedbacks_resp = supabase.table("feedbacks").select("id").execute()
+        campeonatos_resp = tenant_table("campeonatos_kart_1").select("id, nome, data_inicio, data_fim").execute()
+        baterias_resp = tenant_table("baterias_kart_1").select("id, status").execute()
+        participacoes_resp = tenant_table("participacoes").select("id").execute()
+        feedbacks_resp = tenant_table("feedbacks").select("id").execute()
     except Exception as e:
         return f"<p>Erro ao coletar dados para o dashboard: {e}</p>"
 
@@ -1683,14 +1710,14 @@ def dashboard_full() -> str:
     total_feedbacks = len(feedbacks_resp.data or [])
 
     try:
-        participacoes_piloto = supabase.table("participacoes").select("id").eq("user_id", user_id).execute()
+        participacoes_piloto = tenant_table("participacoes").select("id").eq("user_id", user_id).execute()
         total_campeonatos_piloto = len(participacoes_piloto.data or [])
 
         # Exemplo fictício:
-        baterias_piloto = supabase.table("battery_registrations").select("id, posicao").eq("user_id", user_id).execute()
+        baterias_piloto = tenant_table("battery_registrations").select("id, posicao").eq("user_id", user_id).execute()
         vitorias_baterias = sum(1 for reg in (baterias_piloto.data or []) if reg.get("posicao") == 1)
 
-        campeonatos_vencidos = supabase.table("campeonatos_kart_1").select("id").eq("campeao", user_id).execute()
+        campeonatos_vencidos = tenant_table("campeonatos_kart_1").select("id").eq("campeao", user_id).execute()
         vitorias_campeonatos = len(campeonatos_vencidos.data or [])
 
         vitorias_equipes = 3  # Exemplo fixo
@@ -1816,7 +1843,7 @@ def dashboard_full() -> str:
 @login_required
 def piloto_campeonatos() -> str:
     try:
-        resp = supabase.table("campeonatos_kart_1").select("*").execute()
+        resp = tenant_table("campeonatos_kart_1").select("*").execute()
         campeonatos = resp.data or []
     except Exception:
         campeonatos = []
@@ -1990,7 +2017,7 @@ def piloto_perfil():
 
         update_data = {"nome": nome, "email": email, "telefone": telefone, "idade": idade, "descricao": descricao}
         try:
-            supabase.table("profiles").update(update_data).eq("id", user_id).execute()
+            tenant_table("profiles").update(update_data).eq("id", user_id).execute()
             session["user_name"] = nome  # Atualiza exibição no navbar
             flash("Perfil atualizado com sucesso!", "success")
         except Exception as e:
@@ -2000,7 +2027,7 @@ def piloto_perfil():
         return redirect(url_for("piloto_perfil"))
 
     try:
-        profile_resp = supabase.table("profiles").select("*").eq("id", user_id).execute()
+        profile_resp = tenant_table("profiles").select("*").eq("id", user_id).execute()
         profile = profile_resp.data[0] if profile_resp.data else {}
     except Exception as e:
         logging.error(f"Erro ao buscar perfil: {e}")
@@ -2077,10 +2104,11 @@ def piloto_conteudo_endpoint() -> str:
             "user_id": user_id,
             "post_title": post_title,
             "post_content": post_content,
-            "media_filename": filename_saved if filename_saved else None
+            "media_filename": filename_saved if filename_saved else None,
+            "kartodromo_id": session.get("kartodromo_id")
         }
         try:
-            supabase.table("conteudos").insert(content_data).execute()
+            tenant_table("conteudos").insert(content_data).execute()
             flash("Conteúdo publicado com sucesso!", "success")
         except Exception as e:
             logging.error(f"Erro ao publicar conteúdo: {e}")
@@ -2232,7 +2260,7 @@ def piloto_interface_full() -> str:
 @login_required
 def piloto_rankings():
     try:
-        regs_resp = supabase.table("battery_registrations").select("user_id, posicao").execute()
+        regs_resp = tenant_table("battery_registrations").select("user_id, posicao").execute()
         registros = regs_resp.data if regs_resp.data else []
     except Exception as e:
         return f"<p>Erro ao buscar dados de battery_registrations: {e}</p>"
@@ -2249,7 +2277,7 @@ def piloto_rankings():
 
     if user_ids:
         try:
-            profiles_resp = supabase.table("profiles").select("id, nome").in_("id", user_ids).execute()
+            profiles_resp = tenant_table("profiles").select("id, nome").in_("id", user_ids).execute()
             profiles = profiles_resp.data if profiles_resp.data else []
             for p in profiles:
                 pilot_data[p["id"]] = p["nome"]
@@ -2401,7 +2429,7 @@ def piloto_comunidade():
     """
     user_id = session.get("user_id")
     try:
-        profile_resp = supabase.table("profiles").select("nome").eq("id", user_id).execute()
+        profile_resp = tenant_table("profiles").select("nome").eq("id", user_id).execute()
         user_name = profile_resp.data[0]["nome"] if profile_resp.data else "Piloto"
     except Exception:
         user_name = "Piloto"
@@ -2479,7 +2507,7 @@ def piloto_comunidade():
 
               let {{ data, error }} = await supabase
                 .from('chat_messages')
-                .insert({{ user_name, content }})
+                .insert({{ user_name, content, kartodromo_id: "{session.get("kartodromo_id")}" }})
                 .select()
 
               if(error) {{
@@ -2581,7 +2609,7 @@ def admin_campeonato_detail(camp_id):
             "tipo_campeonato": tipo_campeonato
         }
         try:
-            supabase.table("campeonatos_kart_1").update(update_data).eq("id", camp_id).execute()
+            tenant_table("campeonatos_kart_1").update(update_data).eq("id", camp_id).execute()
             flash("Campeonato atualizado com sucesso!", "success")
         except Exception as e:
             logging.error(f"Erro ao atualizar campeonato: {e}")
@@ -2590,14 +2618,14 @@ def admin_campeonato_detail(camp_id):
 
     # GET
     try:
-        camp_resp = supabase.table("campeonatos_kart_1").select("*").eq("id", camp_id).execute()
+        camp_resp = tenant_table("campeonatos_kart_1").select("*").eq("id", camp_id).execute()
         if not camp_resp.data:
             flash("Campeonato não encontrado.", "warning")
             return redirect(url_for("admin_home"))
         campeonato = camp_resp.data[0]
 
         # Carregar baterias relacionadas
-        bat_resp = supabase.table("baterias_kart_1").select("*").eq("campeonato_id", camp_id).execute()
+        bat_resp = tenant_table("baterias_kart_1").select("*").eq("campeonato_id", camp_id).execute()
         baterias = bat_resp.data or []
     except Exception as e:
         logging.error(f"Erro ao buscar campeonato: {e}")
@@ -2680,7 +2708,7 @@ def list_teams():
     Rota simples para listar times/equipes.
     """
     try:
-        resp = supabase.table("teams").select("*").execute()
+        resp = tenant_table("teams").select("*").execute()
         teams = resp.data or []
     except Exception as e:
         logging.error(f"Erro ao buscar teams: {e}")
@@ -2722,7 +2750,7 @@ def create_team():
             flash("Nome do time é obrigatório!", "danger")
             return redirect(url_for("create_team"))
         try:
-            supabase.table("teams").insert({"team_name": team_name}).execute()
+            tenant_table("teams").insert({"team_name": team_name, "kartodromo_id": session.get("kartodromo_id")}).execute()
             flash("Time criado com sucesso!", "success")
         except Exception as e:
             logging.error(f"Erro ao criar time: {e}")
@@ -2768,5 +2796,3 @@ if __name__ == "__main__":
     # Na Render, você configurará o Start Command como, por ex.: gunicorn app:app
     # Mas deixamos abaixo para ambiente local:
     app.run(debug=False, host="0.0.0.0", port=5000)
-
-
