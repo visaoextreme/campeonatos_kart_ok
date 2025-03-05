@@ -90,12 +90,6 @@ def tenant_table(table_name: str):
 # =============================================================================
 @app.after_request
 def add_security_headers(response):
-    # Se o tipo de conteúdo vier como texto simples, forçamos a ser HTML:
-    if response.mimetype == 'text/plain':
-        response.mimetype = 'text/html'
-
-    # Evite 'unsafe-inline' em produção se quiser CSP mais rígido;
-    # Aqui está mantido para não quebrar scripts inline já existentes.
     response.headers["Content-Security-Policy"] = (
         "default-src 'self'; "
         "script-src 'self' 'unsafe-inline'; "
@@ -104,352 +98,27 @@ def add_security_headers(response):
     return response
 
 # =============================================================================
-# FUNÇÃO render_breadcrumbs
-# =============================================================================
-def render_breadcrumbs(section: str, page: str) -> str:
-    return f"""
-    <nav aria-label="breadcrumb">
-      <ol class="breadcrumb">
-        <li class="breadcrumb-item">{section}</li>
-        <li class="breadcrumb-item active" aria-current="page">{page}</li>
-      </ol>
-    </nav>
-    """
-
-# =============================================================================
-# DECORADORES DE AUTORIZAÇÃO
-# =============================================================================
-def login_required(f):
-    @wraps(f)
-    def decorated_function(*args, **kwargs):
-        if not session.get("user_id"):
-            flash("Você precisa fazer login para acessar esta página!", "warning")
-            return redirect(url_for("login_get"))
-        return f(*args, **kwargs)
-    return decorated_function
-
-def admin_required(f):
-    @wraps(f)
-    def decorated_function(*args, **kwargs):
-        if session.get("role") != "admin":
-            flash("Acesso restrito a administradores!", "danger")
-            return redirect(url_for("login_get"))
-        return f(*args, **kwargs)
-    return decorated_function
-
-# =============================================================================
-# TRATAMENTO DE ERROS GLOBAIS (404 e 500)
-# =============================================================================
-@app.errorhandler(404)
-def not_found_error(error):
-    return render_template_string("""
-      <!DOCTYPE html>
-      <html lang="pt">
-      <head>
-         <meta charset="UTF-8">
-         <title>Página Não Encontrada</title>
-         <meta name="viewport" content="width=device-width, initial-scale=1">
-         <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.2.3/dist/css/bootstrap.min.css" rel="stylesheet">
-         <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0-beta3/css/all.min.css">
-         <style>
-           body {
-             font-family: 'Montserrat', sans-serif;
-             background: linear-gradient(135deg, #000000 0%, #007BFF 100%);
-             color: #fff;
-             margin: 0;
-             padding-bottom: 50px;
-           }
-           .error-container {
-             min-height: 100vh;
-             display: flex;
-             align-items: center;
-             justify-content: center;
-             flex-direction: column;
-             text-align: center;
-           }
-           .error-code {
-             font-size: 8rem;
-             font-weight: bold;
-           }
-           .card {
-             border-radius: 10px;
-             background: rgba(255,255,255,0.9);
-             color: #000;
-           }
-         </style>
-      </head>
-      <body>
-         <div class="error-container">
-            <div class="error-code">404</div>
-            <div class="card text-dark mb-3" style="max-width: 500px;">
-              <div class="card-body">
-                <p class="lead mb-0 text-center">Página não encontrada!</p>
-              </div>
-            </div>
-            <a href="/" class="btn btn-primary">Voltar ao Início</a>
-         </div>
-      </body>
-      </html>
-    """), 404
-
-@app.errorhandler(500)
-def internal_error(error):
-    logging.error(f"Erro interno: {error}")
-    return render_template_string("""
-      <!DOCTYPE html>
-      <html lang="pt">
-      <head>
-         <meta charset="UTF-8">
-         <title>Erro Interno</title>
-         <meta name="viewport" content="width=device-width, initial-scale=1">
-         <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.2.3/dist/css/bootstrap.min.css" rel="stylesheet">
-         <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0-beta3/css/all.min.css">
-         <style>
-           body {
-             font-family: 'Montserrat', sans-serif;
-             background: linear-gradient(135deg, #000000 0%, #007BFF 100%);
-             color: #fff;
-             margin: 0;
-             padding-bottom: 50px;
-           }
-           .error-container {
-             min-height: 100vh;
-             display: flex;
-             align-items: center;
-             justify-content: center;
-             flex-direction: column;
-             text-align: center;
-           }
-           .error-code {
-             font-size: 8rem;
-             font-weight: bold;
-           }
-           .card {
-             border-radius: 10px;
-             background: rgba(255,255,255,0.9);
-             color: #000;
-           }
-         </style>
-      </head>
-      <body>
-         <div class="error-container">
-            <div class="error-code">500</div>
-            <div class="card text-dark mb-3" style="max-width: 500px; margin-top: 20px;">
-              <div class="card-body">
-                <p class="lead mb-0 text-center">Ops! Algo deu errado. Tente novamente ou contate o suporte.</p>
-              </div>
-            </div>
-            <a href="/" class="btn btn-primary">Voltar ao Início</a>
-         </div>
-      </body>
-      </html>
-    """), 500
-
-# =============================================================================
-# FUNÇÕES AUXILIARES – Datas, Validações e Formatação
-# =============================================================================
-def parse_date(date_str: str) -> datetime.datetime:
-    if not date_str:
-        raise ValueError("Data vazia")
-    for fmt in ("%d/%m/%Y %H:%M:%S", "%Y-%m-%dT%H:%M:%S"):
-        try:
-            return datetime.datetime.strptime(date_str, fmt)
-        except Exception:
-            continue
-    try:
-        return datetime.datetime.fromisoformat(date_str)
-    except Exception as e:
-        raise ValueError(f"Erro ao converter data: {date_str}") from e
-
-def format_date_br(date_str: str) -> str:
-    try:
-        dt = parse_date(date_str)
-    except Exception:
-        return date_str
-    return dt.strftime("%d/%m/%Y %H:%M:%S")
-
-def checa_inscricoes_fechadas(campeonato: Dict[str, Any]) -> bool:
-    """
-    Verifica se as inscrições estão fechadas por
-    - Tabela auxiliar campeonato_inscricoes_status (manual);
-    - Data de fechamento no registro do campeonato;
-    - A primeira bateria do campeonato já começou;
-    - Já atingiu o número máximo de participantes.
-    """
-    try:
-        status_resp = tenant_table("campeonato_inscricoes_status").select("status").eq("campeonato_id", campeonato["id"]).execute()
-        if status_resp.data and status_resp.data[0].get("status") == "fechado":
-            return True
-    except Exception as e:
-        logging.warning(f"Erro ao checar status manual: {e}")
-
-    data_fech = campeonato.get("data_fechamento_inscricoes")
-    if data_fech:
-        try:
-            dt_fech = parse_date(data_fech)
-            if datetime.datetime.now() >= dt_fech:
-                return True
-        except Exception as e:
-            logging.warning(f"Erro ao converter data de fechamento: {e}")
-
-    # Se a primeira bateria já começou
-    try:
-        bat_resp = tenant_table("baterias_kart_1").select("data_hora_inicio").eq("campeonato_id", campeonato["id"]).order("data_hora_inicio").execute()
-        baterias = bat_resp.data or []
-        if baterias:
-            primeira_bateria = baterias[0].get("data_hora_inicio")
-            if primeira_bateria:
-                dt_primeira = parse_date(primeira_bateria)
-                if datetime.datetime.now() >= dt_primeira:
-                    return True
-    except Exception as e:
-        logging.warning(f"Erro ao checar baterias: {e}")
-
-    # Se já atingiu o número máximo
-    try:
-        part_resp = tenant_table("participacoes").select("user_id").eq("campeonato_id", campeonato["id"]).execute()
-        inscritos = part_resp.data or []
-        if inscritos and len(inscritos) >= campeonato.get("max_participantes", 0):
-            return True
-    except Exception as e:
-        logging.warning(f"Erro ao checar max_participantes: {e}")
-
-    return False
-
-def contar_baterias(campeonato_id: str) -> (int, int):
-    """ Retorna (baterias_finalizadas, baterias_restantes) """
-    try:
-        bat_resp = tenant_table("baterias_kart_1").select("status").eq("campeonato_id", campeonato_id).execute()
-        baterias = bat_resp.data or []
-        feitas = sum(1 for b in baterias if b.get("status") == "finalizada")
-        total = len(baterias)
-        return (feitas, total - feitas)
-    except Exception as e:
-        logging.warning(f"Erro ao contar baterias: {e}")
-        return (0, 0)
-
-def get_camp_status(campeonato: Dict[str, Any]) -> str:
-    """
-    Verifica se o campeonato está 'Aberto', 'Em Andamento' ou 'Terminado',
-    baseado em data_inicio e data_fim.
-    """
-    now = datetime.datetime.now()
-    try:
-        dt_inicio = parse_date(campeonato.get("data_inicio"))
-    except Exception as e:
-        logging.warning(f"Erro ao converter data_inicio: {e}")
-        return "Aberto"
-    try:
-        data_fim_cad = campeonato.get("data_fim")
-        if not data_fim_cad:
-            return "Em Andamento" if now >= dt_inicio else "Aberto"
-        dt_fim = parse_date(data_fim_cad)
-    except Exception as e:
-        logging.warning(f"Erro ao converter data_fim: {e}")
-        return "Em Andamento" if now >= dt_inicio else "Aberto"
-
-    if now < dt_inicio:
-        return "Aberto"
-    elif dt_inicio <= now < dt_fim:
-        return "Em Andamento"
-    else:
-        return "Terminado"
-
-def atualiza_status_baterias(baterias: List[Dict[str, Any]]) -> None:
-    """
-    Atualiza o status das baterias com base nas datas e horários.
-    """
-    now = datetime.datetime.now()
-    for bat in baterias:
-        try:
-            data_inicio_str = bat.get("data_hora_inicio")
-            data_fim_str = bat.get("data_hora_fim")
-            if not data_inicio_str or not data_fim_str:
-                continue
-            dt_inicio = parse_date(data_inicio_str)
-            dt_fim = parse_date(data_fim_str)
-
-            if now < dt_inicio:
-                new_status = "prevista"
-            elif dt_inicio <= now < dt_fim:
-                new_status = "em andamento"
-            else:
-                new_status = "finalizada"
-
-            if bat.get("status") != new_status:
-                tenant_table("baterias_kart_1").update({"status": new_status}).eq("id", bat["id"]).execute()
-                bat["status"] = new_status
-        except Exception as e:
-            logging.warning(f"Erro ao atualizar status da bateria {bat.get('id')}: {e}")
-
-def format_cpf(cpf_str: str) -> str:
-    digits = re.sub(r'\D', '', cpf_str)
-    if len(digits) != 11:
-        return cpf_str
-    return f"{digits[:3]}.{digits[3:6]}.{digits[6:9]}-{digits[9:]}"
-
-def validate_cpf(cpf: str) -> bool:
-    cpf = re.sub(r'\D', '', cpf)
-    if len(cpf) != 11:
-        return False
-    if cpf == cpf[0] * 11:
-        return False
-
-    # Valida primeiro dígito
-    sum_val = sum(int(cpf[i]) * (10 - i) for i in range(9))
-    first_check = (sum_val * 10) % 11
-    if first_check == 10:
-        first_check = 0
-    if first_check != int(cpf[9]):
-        return False
-
-    # Valida segundo dígito
-    sum_val = sum(int(cpf[i]) * (11 - i) for i in range(10))
-    second_check = (sum_val * 10) % 11
-    if second_check == 10:
-        second_check = 0
-    if second_check != int(cpf[10]):
-        return False
-    return True
-
-def format_whatsapp(phone_str: str) -> str:
-    digits = re.sub(r'\D', '', phone_str)
-    if len(digits) == 11:
-        return f"({digits[:2]}) {digits[2:7]}-{digits[7:]}"
-    elif len(digits) == 10:
-        return f"({digits[:2]}) {digits[2:6]}-{digits[6:]}"
-    else:
-        return phone_str
-
-# =============================================================================
-# VARIÁVEIS DE CONFIGURAÇÃO E TEMA
-# =============================================================================
-STREAMING_URL = os.getenv("STREAMING_URL", "https://www.youtube.com/channel/SEU_CANAL")
-IDIOMAS_SUPORTADOS = ["pt", "en", "es", "fr"]
-
-# Adição do Font Awesome para ícones
-FA_CDN = '<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0-beta3/css/all.min.css">'
-
-PALETA_OPCOES: Dict[str, Dict[str, str]] = {
-    "black_azul": {"nome": "Kartódromo MeuKart", "tema_primario": "#000000", "tema_secundario": "#007BFF"},
-    "modern": {"nome": "Kartódromo MeuKart", "tema_primario": "#1d3557", "tema_secundario": "#457b9d"},
-    "elegant": {"nome": "Kartódromo MeuKart", "tema_primario": "#2d3436", "tema_secundario": "#d63031"},
-    "vibrant": {"nome": "Kartódromo MeuKart", "tema_primario": "#00b894", "tema_secundario": "#0984e3"},
-}
-DEFAULT_TEMA: Dict[str, str] = PALETA_OPCOES["black_azul"].copy()
-
-# =============================================================================
 # COMPONENTES VISUAIS – BASE CSS, Navbar, Breadcrumbs, Toasts, Preloader e Loading
 # =============================================================================
+
+# Atualizado para utilizar o tema Minty do Bootswatch e uma paleta mais clara
+FA_CDN = '<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0-beta3/css/all.min.css">'
+
+DEFAULT_TEMA = {
+    "nome": "Kartódromo MeuKart",
+    "tema_primario": "#1d3557",
+    "tema_secundario": "#457b9d"
+}
+
 BASE_CSS = f"""
 {FA_CDN}
-<link href="https://cdn.jsdelivr.net/npm/bootstrap@5.2.3/dist/css/bootstrap.min.css" rel="stylesheet">
+<link href="https://cdn.jsdelivr.net/npm/bootswatch@5.2.3/dist/minty/bootstrap.min.css" rel="stylesheet">
 <link rel="stylesheet" href="https://fonts.googleapis.com/css?family=Montserrat:400,700&display=swap">
 <style>
   body {{
       font-family: 'Montserrat', sans-serif;
-      background: linear-gradient(135deg, {DEFAULT_TEMA["tema_primario"]} 0%, {DEFAULT_TEMA["tema_secundario"]} 100%);
-      color: #fff;
+      background-color: #f8f9fa;
+      color: #212529;
       margin: 0;
       padding-bottom: 50px;
   }}
@@ -457,9 +126,9 @@ BASE_CSS = f"""
       border-radius: 10px;
   }}
   .card {{
-      background: rgba(0,0,0,0.6);
+      background: #fff;
       border: none;
-      box-shadow: 0 4px 8px rgba(0,0,0,0.3);
+      box-shadow: 0 4px 8px rgba(0,0,0,0.1);
       margin-bottom: 20px;
   }}
   .btn-custom {{
@@ -467,7 +136,7 @@ BASE_CSS = f"""
       margin: 5px;
   }}
   .breadcrumb {{
-      background: rgba(0,0,0,0.4);
+      background: #e9ecef;
       border-radius: 5px;
   }}
   .password-meter-container {{
@@ -487,7 +156,7 @@ BASE_CSS = f"""
       margin-bottom: 30px;
   }}
   .dashboard-section h3 {{
-      border-bottom: 2px solid #fff;
+      border-bottom: 2px solid #dee2e6;
       padding-bottom: 5px;
       margin-bottom: 15px;
   }}
@@ -501,7 +170,7 @@ BASE_CSS = f"""
 """
 
 NAVBAR_HTML = """
-<nav class="navbar navbar-expand-lg navbar-dark bg-dark shadow mb-4">
+<nav class="navbar navbar-expand-lg navbar-light bg-light shadow mb-4">
   <div class="container-fluid">
     <a class="navbar-brand" href="/"><strong>{{ theme_name }}</strong></a>
     <button class="navbar-toggler" type="button" data-bs-toggle="collapse" data-bs-target="#navbarContent" 
@@ -521,9 +190,9 @@ NAVBAR_HTML = """
       <span class="navbar-text">
          {% if session.get("user_id") %}
             Bem-vindo, {{ session.get("user_name") }}! 
-            <a href="/logout" class="btn btn-outline-light btn-sm ms-2">Sair</a>
+            <a href="/logout" class="btn btn-outline-primary btn-sm ms-2">Sair</a>
          {% else %}
-            <a href="/login" class="btn btn-outline-light btn-sm ms-2">Entrar</a>
+            <a href="/login" class="btn btn-outline-primary btn-sm ms-2">Entrar</a>
          {% endif %}
       </span>
     </div>
@@ -567,8 +236,300 @@ document.addEventListener('submit', function(e) {
 def get_navbar() -> str:
     return render_template_string(NAVBAR_HTML, theme_name=DEFAULT_TEMA["nome"])
 
+def render_breadcrumbs(section: str, page: str) -> str:
+    return f"""
+    <nav aria-label="breadcrumb">
+      <ol class="breadcrumb">
+        <li class="breadcrumb-item">{section}</li>
+        <li class="breadcrumb-item active" aria-current="page">{page}</li>
+      </ol>
+    </nav>
+    """
+
 # =============================================================================
-# ROTA RAIZ - INDEX
+# TRATAMENTO DE ERROS GLOBAIS (404 e 500)
+# =============================================================================
+@app.errorhandler(404)
+def not_found_error(error):
+    return render_template_string("""
+      <!DOCTYPE html>
+      <html lang="pt">
+      <head>
+         <meta charset="UTF-8">
+         <title>Página Não Encontrada</title>
+         <meta name="viewport" content="width=device-width, initial-scale=1">
+         <link href="https://cdn.jsdelivr.net/npm/bootswatch@5.2.3/dist/minty/bootstrap.min.css" rel="stylesheet">
+         <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0-beta3/css/all.min.css">
+         <style>
+           body {
+             font-family: 'Montserrat', sans-serif;
+             background-color: #f8f9fa;
+             color: #212529;
+             margin: 0;
+             padding-bottom: 50px;
+           }
+           .error-container {
+             min-height: 100vh;
+             display: flex;
+             align-items: center;
+             justify-content: center;
+             flex-direction: column;
+             text-align: center;
+           }
+           .error-code {
+             font-size: 8rem;
+             font-weight: bold;
+           }
+           .card {
+             border-radius: 10px;
+             background: #fff;
+             color: #212529;
+             box-shadow: 0 4px 8px rgba(0,0,0,0.1);
+           }
+         </style>
+      </head>
+      <body>
+         <div class="error-container">
+            <div class="error-code">404</div>
+            <div class="card text-dark mb-3" style="max-width: 500px;">
+              <div class="card-body">
+                <p class="lead mb-0 text-center">Página não encontrada!</p>
+              </div>
+            </div>
+            <a href="/" class="btn btn-primary">Voltar ao Início</a>
+         </div>
+      </body>
+      </html>
+    """), 404
+
+@app.errorhandler(500)
+def internal_error(error):
+    logging.error(f"Erro interno: {error}")
+    return render_template_string("""
+      <!DOCTYPE html>
+      <html lang="pt">
+      <head>
+         <meta charset="UTF-8">
+         <title>Erro Interno</title>
+         <meta name="viewport" content="width=device-width, initial-scale=1">
+         <link href="https://cdn.jsdelivr.net/npm/bootswatch@5.2.3/dist/minty/bootstrap.min.css" rel="stylesheet">
+         <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0-beta3/css/all.min.css">
+         <style>
+           body {
+             font-family: 'Montserrat', sans-serif;
+             background-color: #f8f9fa;
+             color: #212529;
+             margin: 0;
+             padding-bottom: 50px;
+           }
+           .error-container {
+             min-height: 100vh;
+             display: flex;
+             align-items: center;
+             justify-content: center;
+             flex-direction: column;
+             text-align: center;
+           }
+           .error-code {
+             font-size: 8rem;
+             font-weight: bold;
+           }
+           .card {
+             border-radius: 10px;
+             background: #fff;
+             color: #212529;
+             box-shadow: 0 4px 8px rgba(0,0,0,0.1);
+           }
+         </style>
+      </head>
+      <body>
+         <div class="error-container">
+            <div class="error-code">500</div>
+            <div class="card text-dark mb-3" style="max-width: 500px; margin-top: 20px;">
+              <div class="card-body">
+                <p class="lead mb-0 text-center">Ops! Algo deu errado. Tente novamente ou contate o suporte.</p>
+              </div>
+            </div>
+            <a href="/" class="btn btn-primary">Voltar ao Início</a>
+         </div>
+      </body>
+      </html>
+    """), 500
+
+# =============================================================================
+# FUNÇÕES AUXILIARES – Datas, Validações e Formatação
+# =============================================================================
+def parse_date(date_str: str) -> datetime.datetime:
+    if not date_str:
+        raise ValueError("Data vazia")
+    for fmt in ("%d/%m/%Y %H:%M:%S", "%Y-%m-%dT%H:%M:%S"):
+        try:
+            return datetime.datetime.strptime(date_str, fmt)
+        except Exception:
+            continue
+    try:
+        return datetime.datetime.fromisoformat(date_str)
+    except Exception as e:
+        raise ValueError(f"Erro ao converter data: {date_str}") from e
+
+def format_date_br(date_str: str) -> str:
+    try:
+        dt = parse_date(date_str)
+    except Exception:
+        return date_str
+    return dt.strftime("%d/%m/%Y %H:%M:%S")
+
+def checa_inscricoes_fechadas(campeonato: Dict[str, Any]) -> bool:
+    try:
+        status_resp = tenant_table("campeonato_inscricoes_status").select("status").eq("campeonato_id", campeonato["id"]).execute()
+        if status_resp.data and status_resp.data[0].get("status") == "fechado":
+            return True
+    except Exception as e:
+        logging.warning(f"Erro ao checar status manual: {e}")
+
+    data_fech = campeonato.get("data_fechamento_inscricoes")
+    if data_fech:
+        try:
+            dt_fech = parse_date(data_fech)
+            if datetime.datetime.now() >= dt_fech:
+                return True
+        except Exception as e:
+            logging.warning(f"Erro ao converter data de fechamento: {e}")
+
+    try:
+        bat_resp = tenant_table("baterias_kart_1").select("data_hora_inicio").eq("campeonato_id", campeonato["id"]).order("data_hora_inicio").execute()
+        baterias = bat_resp.data or []
+        if baterias:
+            primeira_bateria = baterias[0].get("data_hora_inicio")
+            if primeira_bateria:
+                dt_primeira = parse_date(primeira_bateria)
+                if datetime.datetime.now() >= dt_primeira:
+                    return True
+        # Se já atingiu o número máximo
+    except Exception as e:
+        logging.warning(f"Erro ao checar baterias: {e}")
+
+    try:
+        part_resp = tenant_table("participacoes").select("user_id").eq("campeonato_id", campeonato["id"]).execute()
+        inscritos = part_resp.data or []
+        if inscritos and len(inscritos) >= campeonato.get("max_participantes", 0):
+            return True
+    except Exception as e:
+        logging.warning(f"Erro ao checar max_participantes: {e}")
+
+    return False
+
+def contar_baterias(campeonato_id: str) -> (int, int):
+    try:
+        bat_resp = tenant_table("baterias_kart_1").select("status").eq("campeonato_id", campeonato_id).execute()
+        baterias = bat_resp.data or []
+        feitas = sum(1 for b in baterias if b.get("status") == "finalizada")
+        total = len(baterias)
+        return (feitas, total - feitas)
+    except Exception as e:
+        logging.warning(f"Erro ao contar baterias: {e}")
+        return (0, 0)
+
+def get_camp_status(campeonato: Dict[str, Any]) -> str:
+    now = datetime.datetime.now()
+    try:
+        dt_inicio = parse_date(campeonato.get("data_inicio"))
+    except Exception as e:
+        logging.warning(f"Erro ao converter data_inicio: {e}")
+        return "Aberto"
+    try:
+        data_fim_cad = campeonato.get("data_fim")
+        if not data_fim_cad:
+            return "Em Andamento" if now >= dt_inicio else "Aberto"
+        dt_fim = parse_date(data_fim_cad)
+    except Exception as e:
+        logging.warning(f"Erro ao converter data_fim: {e}")
+        return "Em Andamento" if now >= dt_inicio else "Aberto"
+
+    if now < dt_inicio:
+        return "Aberto"
+    elif dt_inicio <= now < dt_fim:
+        return "Em Andamento"
+    else:
+        return "Terminado"
+
+def atualiza_status_baterias(baterias: List[Dict[str, Any]]) -> None:
+    now = datetime.datetime.now()
+    for bat in baterias:
+        try:
+            data_inicio_str = bat.get("data_hora_inicio")
+            data_fim_str = bat.get("data_hora_fim")
+            if not data_inicio_str or not data_fim_str:
+                continue
+            dt_inicio = parse_date(data_inicio_str)
+            dt_fim = parse_date(data_fim_str)
+
+            if now < dt_inicio:
+                new_status = "prevista"
+            elif dt_inicio <= now < dt_fim:
+                new_status = "em andamento"
+            else:
+                new_status = "finalizada"
+
+            if bat.get("status") != new_status:
+                tenant_table("baterias_kart_1").update({"status": new_status}).eq("id", bat["id"]).execute()
+                bat["status"] = new_status
+        except Exception as e:
+            logging.warning(f"Erro ao atualizar status da bateria {bat.get('id')}: {e}")
+
+def format_cpf(cpf_str: str) -> str:
+    digits = re.sub(r'\D', '', cpf_str)
+    if len(digits) != 11:
+        return cpf_str
+    return f"{digits[:3]}.{digits[3:6]}.{digits[6:9]}-{digits[9:]}"
+
+def validate_cpf(cpf: str) -> bool:
+    cpf = re.sub(r'\D', '', cpf)
+    if len(cpf) != 11:
+        return False
+    if cpf == cpf[0] * 11:
+        return False
+
+    sum_val = sum(int(cpf[i]) * (10 - i) for i in range(9))
+    first_check = (sum_val * 10) % 11
+    if first_check == 10:
+        first_check = 0
+    if first_check != int(cpf[9]):
+        return False
+
+    sum_val = sum(int(cpf[i]) * (11 - i) for i in range(10))
+    second_check = (sum_val * 10) % 11
+    if second_check == 10:
+        second_check = 0
+    if second_check != int(cpf[10]):
+        return False
+    return True
+
+def format_whatsapp(phone_str: str) -> str:
+    digits = re.sub(r'\D', '', phone_str)
+    if len(digits) == 11:
+        return f"({digits[:2]}) {digits[2:7]}-{digits[7:]}"
+    elif len(digits) == 10:
+        return f"({digits[:2]}) {digits[2:6]}-{digits[6:]}"
+    else:
+        return phone_str
+
+# =============================================================================
+# VARIÁVEIS DE CONFIGURAÇÃO E TEMA
+# =============================================================================
+STREAMING_URL = os.getenv("STREAMING_URL", "https://www.youtube.com/channel/SEU_CANAL")
+IDIOMAS_SUPORTADOS = ["pt", "en", "es", "fr"]
+
+PALETA_OPCOES: Dict[str, Dict[str, str]] = {
+    "black_azul": {"nome": "Kartódromo MeuKart", "tema_primario": "#000000", "tema_secundario": "#007BFF"},
+    "modern": {"nome": "Kartódromo MeuKart", "tema_primario": "#1d3557", "tema_secundario": "#457b9d"},
+    "elegant": {"nome": "Kartódromo MeuKart", "tema_primario": "#2d3436", "tema_secundario": "#d63031"},
+    "vibrant": {"nome": "Kartódromo MeuKart", "tema_primario": "#00b894", "tema_secundario": "#0984e3"},
+}
+DEFAULT_TEMA: Dict[str, str] = PALETA_OPCOES["black_azul"].copy()
+
+# =============================================================================
+# ROTAS – INDEX
 # =============================================================================
 @app.route("/", methods=["GET"])
 def index():
@@ -593,7 +554,7 @@ def index():
                 <div class="d-flex flex-wrap justify-content-center gap-3 mt-3">
                   <a href="/login" class="btn btn-primary btn-lg">Fazer Login</a>
                   <a href="/register" class="btn btn-success btn-lg">Cadastrar-se</a>
-                  <a href="/piloto/interface" class="btn btn-light btn-lg">Área do Piloto</a>
+                  <a href="/piloto/interface" class="btn btn-info btn-lg">Área do Piloto</a>
                 </div>
               </div>
             </div>
@@ -662,7 +623,6 @@ def login_get():
                                       navbar=get_navbar(),
                                       toast_container=TOAST_CONTAINER,
                                       global_loading=GLOBAL_LOADING_SCRIPT)
-    # POST
     email = request.form.get("email", "").strip().lower()
     password = request.form.get("password", "").strip()
 
@@ -682,7 +642,7 @@ def login_get():
 
         session["user_id"] = user["id"]
         session["role"] = user.get("role", "client")
-        session["user_name"] = user.get("nome", "Piloto")  # Exibe no navbar
+        session["user_name"] = user.get("nome", "Piloto")
         flash("Login realizado com sucesso!", "success")
         return redirect(url_for("select_role"))
     except Exception as e:
@@ -698,7 +658,6 @@ def logout():
 
 @app.route("/select_role", methods=["GET"])
 def select_role():
-    # Redireciona dependendo da role do usuário
     if session.get("role") == "admin":
         return redirect("/admin")
     else:
@@ -761,7 +720,6 @@ def recover_password():
         token = serializer.dumps(user["id"], salt="reset-password")
         reset_link = os.getenv("BASE_URL", "http://127.0.0.1:5000") + "/reset_password/" + token
 
-        # Enviar email com SendGrid
         sg = sendgrid.SendGridAPIClient(api_key=os.getenv("TWILIO_SENDGRID_API_KEY_CAMPEONATOS", "SUA_SENDGRID_KEY"))
         from_email = os.getenv("FROM_EMAIL", "contato@exemplo.com")
         subject = "Redefinição de Senha - Plataforma de Campeonatos"
@@ -990,7 +948,6 @@ def register_route() -> Any:
                                       email="",
                                       cpf="")
 
-    # POST
     nome = request.form.get("nome", "").strip()
     email = request.form.get("email", "").strip().lower()
     cpf = request.form.get("cpf", "").strip()
@@ -1171,7 +1128,6 @@ def recover_email():
             """, theme_name=DEFAULT_TEMA["nome"], base_css=BASE_CSS,
                navbar=get_navbar(), toast_container=TOAST_CONTAINER, global_loading=GLOBAL_LOADING_SCRIPT)
     else:
-        # POST
         cpf = request.form.get("cpf", "").strip()
         if not cpf:
             flash("CPF é obrigatório.", "danger")
@@ -1322,9 +1278,6 @@ def change_password():
         flash("Erro ao alterar senha. Por favor, tente novamente.", "danger")
         return redirect(url_for("change_password"))
 
-# =============================================================================
-# EXCLUSÃO DE PERFIL
-# =============================================================================
 def generate_delete_token(user_id: str) -> str:
     return serializer.dumps(user_id, salt='delete-profile')
 
@@ -1430,7 +1383,6 @@ def delete_profile():
                                       global_loading=GLOBAL_LOADING_SCRIPT)
 
     else:
-        # POST -> Enviar email de confirmação
         try:
             token = generate_delete_token(user_id)
             send_delete_confirmation_email(user_profile["email"], token, user_profile["nome"])
@@ -1459,18 +1411,11 @@ def confirm_delete(token: str):
 
     return redirect(url_for("select_role"))
 
-# =============================================================================
-# FUNÇÕES DE PONTUAÇÃO
-# =============================================================================
 def calculate_battery_points(pos: int) -> int:
-    # Exemplo de pontuação
     mapping = {1: 20, 2: 16, 3: 12, 4: 10, 5: 8, 6: 6, 7: 4, 8: 3, 9: 2, 10: 1}
     return mapping.get(pos, 0)
 
 def atualizar_pontos_piloto(user_id: str):
-    """
-    Soma todos os pontos de 'battery_registrations' e atualiza em 'profiles'.
-    """
     try:
         resp = tenant_table("battery_registrations").select("posicao").eq("user_id", user_id).execute()
         regs = resp.data or []
@@ -1479,14 +1424,10 @@ def atualizar_pontos_piloto(user_id: str):
             pos = reg.get("posicao")
             if pos is not None:
                 total += calculate_battery_points(pos)
-        # Atualiza no profiles
         tenant_table("profiles").update({"pontos": total}).eq("id", user_id).execute()
     except Exception as e:
         logging.error(f"Erro ao atualizar pontos do piloto: {e}")
 
-# =============================================================================
-# ROTAS DIVERSAS – INSCRIÇÃO, FEEDBACK, ESTATÍSTICAS, STREAMING, ETC.
-# =============================================================================
 @app.route("/inscrever", methods=["POST"])
 def inscrever_piloto() -> Any:
     data = request.json
@@ -1515,7 +1456,6 @@ def inscrever_piloto() -> Any:
     except Exception:
         pass
 
-    # Verifica se atingiu max_participantes
     try:
         part_count_resp = tenant_table("participacoes").select("*", count="exact").eq("campeonato_id", campeonato_id).execute()
         inscritos_count = len(part_count_resp.data) if part_count_resp.data else 0
@@ -1539,20 +1479,14 @@ def inscrever_piloto() -> Any:
 @app.route("/piloto/bateria_inscrever", methods=["POST"])
 @login_required
 def piloto_inscrever_bateria():
-    """
-    Exemplo de rota para inserir em 'battery_registrations'.
-    JSON esperado: { "bateria_id": "...", "posicao": <int> }
-    O user_id será obtido da session (piloto logado).
-    """
     user_id = session.get("user_id")
     data = request.json or {}
     bateria_id = data.get("bateria_id")
-    posicao = data.get("posicao")  # se quiser já inserir a posição final
+    posicao = data.get("posicao")
 
     if not bateria_id:
         return jsonify({"error": "bateria_id é obrigatório"}), 400
 
-    # Verifica se a bateria existe
     try:
         bat_resp = tenant_table("baterias_kart_1").select("*").eq("id", bateria_id).execute()
         if not bat_resp.data:
@@ -1560,7 +1494,6 @@ def piloto_inscrever_bateria():
     except Exception as e:
         return jsonify({"error": f"Erro ao checar bateria: {e}"}), 400
 
-    # Verifica se já existe um registro do piloto nessa bateria
     try:
         reg_resp = tenant_table("battery_registrations").select("*").eq("bateria_id", bateria_id).eq("user_id", user_id).execute()
         if reg_resp.data:
@@ -1578,7 +1511,6 @@ def piloto_inscrever_bateria():
             insert_data["posicao"] = posicao
 
         tenant_table("battery_registrations").insert(insert_data).execute()
-        # Após inserir, recalcula pontos do piloto
         atualizar_pontos_piloto(user_id)
         return jsonify({"message": "Inscrição na bateria realizada com sucesso!"}), 201
     except Exception as e:
@@ -1588,7 +1520,6 @@ def piloto_inscrever_bateria():
 def feedback_route() -> Any:
     data = request.json
     try:
-        # Adiciona o kartodromo_id ao feedback
         data["kartodromo_id"] = session.get("kartodromo_id")
         tenant_table("feedbacks").insert(data).execute()
         return jsonify({"message": "Feedback enviado com sucesso!"}), 201
@@ -1607,7 +1538,6 @@ def estatisticas_route() -> Any:
             return jsonify({"error": "Nenhum piloto encontrado para este CPF."}), 404
 
         pilot_info = perfil_resp.data[0]
-        # Exemplo fictício, agora incluindo "pontos":
         estat = {
             "total_corridas": 25,
             "vitórias": 10,
@@ -1685,9 +1615,6 @@ def admin_only_route() -> Any:
     except Exception as e:
         return jsonify({"error": str(e)}), 400
 
-# =============================================================================
-# ROTAS – ÁREA DO PILOTO (usuário autenticado)
-# =============================================================================
 @app.route("/piloto/dashboard", methods=["GET"])
 @login_required
 def dashboard_full() -> str:
@@ -1717,15 +1644,14 @@ def dashboard_full() -> str:
         participacoes_piloto = tenant_table("participacoes").select("id").eq("user_id", user_id).execute()
         total_campeonatos_piloto = len(participacoes_piloto.data or [])
 
-        # Exemplo fictício:
         baterias_piloto = tenant_table("battery_registrations").select("id, posicao").eq("user_id", user_id).execute()
         vitorias_baterias = sum(1 for reg in (baterias_piloto.data or []) if reg.get("posicao") == 1)
 
         campeonatos_vencidos = tenant_table("campeonatos_kart_1").select("id").eq("campeao", user_id).execute()
         vitorias_campeonatos = len(campeonatos_vencidos.data or [])
 
-        vitorias_equipes = 3  # Exemplo fixo
-        derrotas_equipes = 1  # Exemplo fixo
+        vitorias_equipes = 3
+        derrotas_equipes = 1
     except Exception as e:
         total_campeonatos_piloto = 0
         vitorias_baterias = 0
@@ -1748,9 +1674,8 @@ def dashboard_full() -> str:
     values = list(stats.values())
 
     stats_list_html = "".join([
-        f'<li class="list-group-item d-flex justify-content-between align-items-center bg-dark text-white">'
-        f'{label}<span class="badge bg-primary rounded-pill">{value}</span></li>'
-        for label, value in stats.items()
+        f'<li class="list-group-item d-flex justify-content-between align-items-center">\
+{label}<span class="badge bg-primary rounded-pill">{value}</span></li>' for label, value in stats.items()
     ])
 
     breadcrumbs = render_breadcrumbs("Dashboard", "Visão Geral")
@@ -1875,10 +1800,10 @@ def piloto_campeonatos() -> str:
         cards_html += f"""
         <div class="col">
           <a href="/admin/campeonato/{camp_id}" style="text-decoration: none;">
-            <div class="p-3 text-center" style="border-left: 5px solid {border_color}; background: rgba(0,0,0,0.5); border-radius: 10px; box-shadow: 0 4px 8px rgba(0,0,0,0.3);">
+            <div class="p-3 text-center" style="border-left: 5px solid {border_color}; background: #fff; border-radius: 10px; box-shadow: 0 4px 8px rgba(0,0,0,0.1);">
               <h5 style="margin: 0; font-size: 1.5rem;"><i class="fas fa-medal"></i> {camp_name}</h5>
               <p style="margin: 10px 0 0;">Início: {data_inicio} <br>Tipo: {tipo}</p>
-              <button class="btn btn-light mt-2">{btn_text}</button>
+              <button class="btn btn-primary mt-2">{btn_text}</button>
             </div>
           </a>
         </div>
@@ -1945,7 +1870,7 @@ def pilot_interface() -> str:
                   <div class="card-body">
                     <h3><i class="fas fa-trophy"></i> Campeonatos</h3>
                     <p>Veja os campeonatos disponíveis e participe.</p>
-                    <a href="/piloto/campeonatos" class="btn btn-light btn-custom">Ver Campeonatos</a>
+                    <a href="/piloto/campeonatos" class="btn btn-primary btn-custom">Ver Campeonatos</a>
                   </div>
                </div>
              </div>
@@ -1954,7 +1879,7 @@ def pilot_interface() -> str:
                   <div class="card-body">
                     <h3><i class="fas fa-chart-line"></i> Meu Dashboard</h3>
                     <p>Acompanhe seu desempenho e histórico de corridas.</p>
-                    <a href="/piloto/dashboard" class="btn btn-light btn-custom">Ver Dashboard</a>
+                    <a href="/piloto/dashboard" class="btn btn-primary btn-custom">Ver Dashboard</a>
                   </div>
                </div>
              </div>
@@ -1963,7 +1888,7 @@ def pilot_interface() -> str:
                   <div class="card-body">
                     <h3><i class="fas fa-medal"></i> Rankings</h3>
                     <p>Confira sua posição e conquistas.</p>
-                    <a href="/piloto/rankings" class="btn btn-light btn-custom">Ver Rankings</a>
+                    <a href="/piloto/rankings" class="btn btn-primary btn-custom">Ver Rankings</a>
                   </div>
                </div>
              </div>
@@ -1972,7 +1897,7 @@ def pilot_interface() -> str:
                   <div class="card-body">
                     <h3><i class="fas fa-edit"></i> Conteúdo</h3>
                     <p>Compartilhe posts e veja publicações.</p>
-                    <a href="/piloto/conteudo" class="btn btn-light btn-custom">Ver Conteúdo</a>
+                    <a href="/piloto/conteudo" class="btn btn-primary btn-custom">Ver Conteúdo</a>
                   </div>
                </div>
              </div>
@@ -1981,7 +1906,7 @@ def pilot_interface() -> str:
                   <div class="card-body">
                     <h3><i class="fas fa-layer-group"></i> Interface Completa</h3>
                     <p>Acesse todos os recursos em um só lugar.</p>
-                    <a href="/piloto/interface" class="btn btn-light btn-custom">Ver Interface</a>
+                    <a href="/piloto/interface" class="btn btn-primary btn-custom">Ver Interface</a>
                   </div>
                </div>
              </div>
@@ -2022,7 +1947,7 @@ def piloto_perfil():
         update_data = {"nome": nome, "email": email, "telefone": telefone, "idade": idade, "descricao": descricao}
         try:
             tenant_table("profiles").update(update_data).eq("id", user_id).execute()
-            session["user_name"] = nome  # Atualiza exibição no navbar
+            session["user_name"] = nome
             flash("Perfil atualizado com sucesso!", "success")
         except Exception as e:
             logging.error(f"Erro ao atualizar perfil: {e}")
@@ -2102,7 +2027,6 @@ def piloto_conteudo_endpoint() -> str:
             filename_saved = secure_filename(media_file.filename)
             media_file.save(os.path.join(app.config["UPLOAD_FOLDER"], filename_saved))
 
-        # Salvar em "conteudos" no supabase
         user_id = session.get("user_id")
         content_data = {
             "user_id": user_id,
@@ -2321,10 +2245,10 @@ def piloto_rankings():
        {BASE_CSS}
        <style>
          table.table-ranking {{
-            background-color: #2c2f33;
+            background-color: #fff;
          }}
          table.table-ranking thead th {{
-            background-color: #23272a;
+            background-color: #e9ecef;
          }}
        </style>
     </head>
@@ -2338,7 +2262,7 @@ def piloto_rankings():
            </div>
          </div>
          <div class="table-responsive">
-           <table class="table table-dark table-hover table-ranking">
+           <table class="table table-hover table-ranking">
              <thead>
                <tr>
                  <th scope="col">Posição</th>
@@ -2427,10 +2351,6 @@ def pontuacoes_tabela():
 @app.route("/piloto/comunidade", methods=["GET"])
 @login_required
 def piloto_comunidade():
-    """
-    Exemplo simples de chat em tempo real com Supabase Realtime (se estiver usando).
-    Se não estiver usando Realtime, ignore ou adapte.
-    """
     user_id = session.get("user_id")
     try:
         profile_resp = tenant_table("profiles").select("nome").eq("id", user_id).execute()
@@ -2529,8 +2449,7 @@ def piloto_comunidade():
            padding: 10px;
            height: 300px;
            overflow-y: auto;
-           background-color: #2e2e2e;
-           color: #fff;
+           background-color: #fff;
          }}
          .chat-container {{
            max-width: 700px;
@@ -2560,9 +2479,6 @@ def piloto_comunidade():
     return render_template_string(html, theme_name=DEFAULT_TEMA["nome"],
                                   toast_container=TOAST_CONTAINER, global_loading=GLOBAL_LOADING_SCRIPT)
 
-# =============================================================================
-# ROTA ADMIN (EXEMPLO BÁSICO, EXPANDA COMO PRECISAR)
-# =============================================================================
 @app.route("/admin", methods=["GET"])
 @admin_required
 def admin_home():
@@ -2592,9 +2508,6 @@ def admin_home():
     </html>
     """, base_css=BASE_CSS, navbar=get_navbar(), toast_container=TOAST_CONTAINER, global_loading=GLOBAL_LOADING_SCRIPT)
 
-# =============================================================================
-# ROTA /admin/campeonato/<camp_id> - CRUD simples de campeonatos
-# =============================================================================
 @app.route("/admin/campeonato/<camp_id>", methods=["GET", "POST"])
 @admin_required
 def admin_campeonato_detail(camp_id):
@@ -2620,7 +2533,6 @@ def admin_campeonato_detail(camp_id):
             flash("Erro ao atualizar campeonato.", "danger")
         return redirect(url_for("admin_campeonato_detail", camp_id=camp_id))
 
-    # GET
     try:
         camp_resp = tenant_table("campeonatos_kart_1").select("*").eq("id", camp_id).execute()
         if not camp_resp.data:
@@ -2628,7 +2540,6 @@ def admin_campeonato_detail(camp_id):
             return redirect(url_for("admin_home"))
         campeonato = camp_resp.data[0]
 
-        # Carregar baterias relacionadas
         bat_resp = tenant_table("baterias_kart_1").select("*").eq("campeonato_id", camp_id).execute()
         baterias = bat_resp.data or []
     except Exception as e:
@@ -2636,7 +2547,6 @@ def admin_campeonato_detail(camp_id):
         flash("Erro ao buscar campeonato.", "danger")
         return redirect(url_for("admin_home"))
 
-    # Render
     html = """
     <!DOCTYPE html>
     <html lang="pt">
@@ -2680,7 +2590,7 @@ def admin_campeonato_detail(camp_id):
         {% if baterias %}
           <ul class="list-group">
           {% for bat in baterias %}
-            <li class="list-group-item bg-dark text-white mb-2">
+            <li class="list-group-item mb-2">
               Bateria #{{ bat["id"] }} - Status: {{ bat["status"] }}
               <br>Início: {{ bat["data_hora_inicio"] }} <br>Fim: {{ bat["data_hora_fim"] }}
             </li>
@@ -2703,14 +2613,8 @@ def admin_campeonato_detail(camp_id):
                                   toast_container=TOAST_CONTAINER,
                                   global_loading=GLOBAL_LOADING_SCRIPT)
 
-# =============================================================================
-# ROTAS DE TEAMS (exemplo mínimo)
-# =============================================================================
 @app.route("/teams", methods=["GET"])
 def list_teams():
-    """
-    Rota simples para listar times/equipes.
-    """
     try:
         resp = tenant_table("teams").select("*").execute()
         teams = resp.data or []
@@ -2733,7 +2637,7 @@ def list_teams():
         <h1 class="mb-4">Times</h1>
         <a href="/teams/create" class="btn btn-success mb-3">Criar Novo Time</a>
         <ul class="list-group">
-          {"".join(f"<li class='list-group-item bg-dark text-white'>{t.get('team_name','Sem nome')}</li>" for t in teams)}
+          {"".join(f"<li class='list-group-item'>{t.get('team_name','Sem nome')}</li>" for t in teams)}
         </ul>
         <a href="/" class="btn btn-secondary mt-3">Voltar</a>
       </div>
@@ -2792,11 +2696,5 @@ def create_team():
                                   toast_container=TOAST_CONTAINER,
                                   global_loading=GLOBAL_LOADING_SCRIPT)
 
-# =============================================================================
-# MAIN
-# =============================================================================
 if __name__ == "__main__":
-    # Em produção, use Gunicorn ou outro servidor WSGI.
-    # Na Render, você configurará o Start Command como, por ex.: gunicorn app:app
-    # Mas deixamos abaixo para ambiente local:
     app.run(debug=False, host="0.0.0.0", port=5000)
