@@ -23,6 +23,12 @@ from sendgrid.helpers.mail import Mail
 from werkzeug.security import generate_password_hash, check_password_hash
 from werkzeug.utils import secure_filename
 
+# -------------- IMPORTS ADICIONAIS PARA A MANUTENÇÃO DE INSTÂNCIA --------------
+import threading
+import time
+import requests
+
+
 # =============================================================================
 # DECORADORES PERSONALIZADOS
 # =============================================================================
@@ -2724,5 +2730,34 @@ def create_team():
                                   toast_container=TOAST_CONTAINER,
                                   global_loading=GLOBAL_LOADING_SCRIPT)
 
+# =============================================================================
+# ROTA DE PING PARA MANTER A INSTÂNCIA ACORDADA
+# =============================================================================
+@app.route("/ping", methods=["GET"])
+def ping():
+    """Rota simples que retorna 'pong' - usada pelo keep-alive."""
+    return "pong", 200
+
+
+# =============================================================================
+# THREAD KEEP-ALIVE: MANTER A INSTÂNCIA ACORDADA
+# =============================================================================
+def keep_alive():
+    """Thread que periodicamente faz requisições para a rota /ping,
+    tentando manter a instância ativa."""
+    base_url = os.getenv("BASE_URL", "http://127.0.0.1:5000")
+    ping_url = base_url + "/ping"
+    while True:
+        try:
+            time.sleep(60 * 5)  # A cada 5 minutos
+            requests.get(ping_url, timeout=5)
+            logging.info("Keep-Alive: ping enviado com sucesso.")
+        except Exception as e:
+            logging.error(f"Keep-Alive: erro ao enviar ping -> {e}")
+
+
 if __name__ == "__main__":
+    # Inicia a thread de keep-alive em segundo plano
+    threading.Thread(target=keep_alive, daemon=True).start()
+
     app.run(debug=False, host="0.0.0.0", port=5000)
