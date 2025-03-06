@@ -551,20 +551,43 @@ PALETA_OPCOES: Dict[str, Dict[str, str]] = {
 DEFAULT_TEMA: Dict[str, str] = PALETA_OPCOES["black_azul"].copy()
 
 # =============================================================================
-# ROTAS – INDEX (MODIFICADA PARA MOSTRAR SOMENTE LOGIN E REDIRECIONAR PELO PERFIL)
+# ROTAS – INDEX
 # =============================================================================
 @app.route("/", methods=["GET"])
 def index():
-    # Se não estiver logado, redireciona para login
-    if not session.get("user_id"):
-        return redirect(url_for("login_get"))
-    # Se estiver logado, verifica a role
-    if session.get("role") == "admin":
-        # Redireciona para a rota que permite escolher se entra como piloto ou admin
-        return redirect(url_for("select_role"))
-    else:
-        # Piloto (client) já é redirecionado para a interface de piloto
-        return redirect(url_for("pilot_interface"))
+    return render_template_string(f"""
+    <!DOCTYPE html>
+    <html lang="pt">
+    <head>
+      <meta charset="UTF-8">
+      <title>Bem-vindo - {DEFAULT_TEMA["nome"]}</title>
+      {BASE_CSS}
+    </head>
+    <body>
+      {get_navbar()}
+      {TOAST_CONTAINER}
+      <div class="container my-5">
+        <div class="row justify-content-center">
+          <div class="col-12 col-md-8 col-lg-6">
+            <div class="card p-4">
+              <div class="card-body text-center">
+                <h1 class="mb-3">Bem-vindo à Plataforma de Campeonatos de Kart</h1>
+                <p>Este é o sistema completo para gerenciamento de Campeonatos de Kart.</p>
+                <div class="d-flex flex-wrap justify-content-center gap-3 mt-3">
+                  <a href="/login" class="btn btn-primary btn-lg">Fazer Login</a>
+                  <a href="/register" class="btn btn-success btn-lg">Cadastrar-se</a>
+                  <a href="/piloto/interface" class="btn btn-info btn-lg">Área do Piloto</a>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+      {GLOBAL_LOADING_SCRIPT}
+      <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.2.3/dist/js/bootstrap.bundle.min.js"></script>
+    </body>
+    </html>
+    """)
 
 # =============================================================================
 # ROTAS – LOGIN, CADASTRO, RECUPERAÇÃO E ALTERAÇÃO DE SENHA
@@ -646,8 +669,7 @@ def login_get():
         session["role"] = user.get("role", "client")
         session["user_name"] = user.get("nome", "Piloto")
         flash("Login realizado com sucesso!", "success")
-        # Após logar, redireciona para verificação de role
-        return redirect(url_for("index"))
+        return redirect(url_for("select_role"))
     except Exception as e:
         logging.error(f"Erro durante o login: {e}")
         flash("Ocorreu um erro durante o login. Por favor, tente novamente ou contate o suporte.", "danger")
@@ -659,50 +681,12 @@ def logout():
     flash("Você saiu da sua conta.", "info")
     return redirect(url_for("index"))
 
-# =============================================================================
-# Escolher se o admin quer entrar como piloto ou admin (para ADMIN)
-# =============================================================================
 @app.route("/select_role", methods=["GET"])
 def select_role():
-    if session.get("role") != "admin":
-        # Se não é admin, redireciona para a área de piloto
-        return redirect(url_for("pilot_interface"))
-
-    # Aqui, se for admin, mostramos a página para ele escolher
-    html = f"""
-    <!DOCTYPE html>
-    <html lang="pt">
-    <head>
-      <meta charset="UTF-8">
-      <title>Escolha de Perfil - {{theme_name}}</title>
-      {{base_css|safe}}
-    </head>
-    <body>
-      {{navbar|safe}}
-      {{toast_container|safe}}
-      <div class="container my-5">
-        <div class="card p-4">
-          <div class="card-body text-center">
-            <h1 class="mb-3">Olá, Administrador!</h1>
-            <p>Escolha como deseja acessar a plataforma:</p>
-            <div class="d-flex flex-wrap justify-content-center gap-3 mt-3">
-              <a href="/admin" class="btn btn-success btn-lg">Entrar como Admin</a>
-              <a href="/piloto" class="btn btn-primary btn-lg">Entrar como Piloto</a>
-            </div>
-          </div>
-        </div>
-      </div>
-      {{global_loading|safe}}
-      <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.2.3/dist/js/bootstrap.bundle.min.js"></script>
-    </body>
-    </html>
-    """
-    return render_template_string(html,
-                                  base_css=BASE_CSS,
-                                  navbar=get_navbar(),
-                                  toast_container=TOAST_CONTAINER,
-                                  global_loading=GLOBAL_LOADING_SCRIPT,
-                                  theme_name=DEFAULT_TEMA["nome"])
+    if session.get("role") == "admin":
+        return redirect("/admin")
+    else:
+        return redirect("/piloto")
 
 @app.route("/recover_password", methods=["GET", "POST"])
 def recover_password():
