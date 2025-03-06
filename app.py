@@ -123,24 +123,26 @@ def add_security_headers(response):
 # COMPONENTES VISUAIS – BASE CSS, Navbar, Breadcrumbs, Toasts, Preloader e Loading
 # =============================================================================
 
-# Atualizado para utilizar o tema Minty do Bootswatch e uma paleta mais clara
+# Atualizado para utilizar o tema Darkly do Bootswatch com interface azul escuro
 FA_CDN = '<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0-beta3/css/all.min.css">'
 
-DEFAULT_TEMA = {
-    "nome": "Kartódromo MeuKart",
-    "tema_primario": "#1d3557",
-    "tema_secundario": "#457b9d"
+PALETA_OPCOES: Dict[str, Dict[str, str]] = {
+    "black_azul": {"nome": "Kartódromo MeuKart", "tema_primario": "#0d1b2a", "tema_secundario": "#415a77"},
+    "modern": {"nome": "Kartódromo MeuKart", "tema_primario": "#1d3557", "tema_secundario": "#457b9d"},
+    "elegant": {"nome": "Kartódromo MeuKart", "tema_primario": "#2d3436", "tema_secundario": "#d63031"},
+    "vibrant": {"nome": "Kartódromo MeuKart", "tema_primario": "#00b894", "tema_secundario": "#0984e3"},
 }
+DEFAULT_TEMA: Dict[str, str] = PALETA_OPCOES["black_azul"].copy()
 
 BASE_CSS = f"""
 {FA_CDN}
-<link href="https://cdn.jsdelivr.net/npm/bootswatch@5.2.3/dist/minty/bootstrap.min.css" rel="stylesheet">
+<link href="https://cdn.jsdelivr.net/npm/bootswatch@5.2.3/dist/darkly/bootstrap.min.css" rel="stylesheet">
 <link rel="stylesheet" href="https://fonts.googleapis.com/css?family=Montserrat:400,700&display=swap">
 <style>
   body {{
       font-family: 'Montserrat', sans-serif;
-      background-color: #f8f9fa;
-      color: #212529;
+      background-color: {DEFAULT_TEMA["tema_primario"]};
+      color: #f8f9fa;
       margin: 0;
       padding-bottom: 50px;
   }}
@@ -148,9 +150,9 @@ BASE_CSS = f"""
       border-radius: 10px;
   }}
   .card {{
-      background: #fff;
+      background: #1b263b;
       border: none;
-      box-shadow: 0 4px 8px rgba(0,0,0,0.1);
+      box-shadow: 0 4px 8px rgba(0,0,0,0.2);
       margin-bottom: 20px;
   }}
   .btn-custom {{
@@ -158,12 +160,12 @@ BASE_CSS = f"""
       margin: 5px;
   }}
   .breadcrumb {{
-      background: #e9ecef;
+      background: #343a40;
       border-radius: 5px;
   }}
   .password-meter-container {{
       height: 10px;
-      background: #ddd;
+      background: #495057;
       border-radius: 5px;
       margin-top: 5px;
   }}
@@ -192,7 +194,7 @@ BASE_CSS = f"""
 """
 
 NAVBAR_HTML = """
-<nav class="navbar navbar-expand-lg navbar-light bg-light shadow mb-4">
+<nav class="navbar navbar-expand-lg navbar-dark bg-dark shadow mb-4">
   <div class="container-fluid">
     <a class="navbar-brand" href="/"><strong>{{ theme_name }}</strong></a>
     <button class="navbar-toggler" type="button" data-bs-toggle="collapse" data-bs-target="#navbarContent" 
@@ -280,13 +282,13 @@ def not_found_error(error):
          <meta charset="UTF-8">
          <title>Página Não Encontrada</title>
          <meta name="viewport" content="width=device-width, initial-scale=1">
-         <link href="https://cdn.jsdelivr.net/npm/bootswatch@5.2.3/dist/minty/bootstrap.min.css" rel="stylesheet">
+         <link href="https://cdn.jsdelivr.net/npm/bootswatch@5.2.3/dist/darkly/bootstrap.min.css" rel="stylesheet">
          <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0-beta3/css/all.min.css">
          <style>
            body {
              font-family: 'Montserrat', sans-serif;
-             background-color: #f8f9fa;
-             color: #212529;
+             background-color: #0d1b2a;
+             color: #f8f9fa;
              margin: 0;
              padding-bottom: 50px;
            }
@@ -304,16 +306,16 @@ def not_found_error(error):
            }
            .card {
              border-radius: 10px;
-             background: #fff;
-             color: #212529;
-             box-shadow: 0 4px 8px rgba(0,0,0,0.1);
+             background: #1b263b;
+             color: #f8f9fa;
+             box-shadow: 0 4px 8px rgba(0,0,0,0.2);
            }
          </style>
       </head>
       <body>
          <div class="error-container">
             <div class="error-code">404</div>
-            <div class="card text-dark mb-3" style="max-width: 500px;">
+            <div class="card text-light mb-3" style="max-width: 500px;">
               <div class="card-body">
                 <p class="lead mb-0 text-center">Página não encontrada!</p>
               </div>
@@ -334,13 +336,13 @@ def internal_error(error):
          <meta charset="UTF-8">
          <title>Erro Interno</title>
          <meta name="viewport" content="width=device-width, initial-scale=1">
-         <link href="https://cdn.jsdelivr.net/npm/bootswatch@5.2.3/dist/minty/bootstrap.min.css" rel="stylesheet">
+         <link href="https://cdn.jsdelivr.net/npm/bootswatch@5.2.3/dist/darkly/bootstrap.min.css" rel="stylesheet">
          <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0-beta3/css/all.min.css">
          <style>
            body {
              font-family: 'Montserrat', sans-serif;
-             background-color: #f8f9fa;
-             color: #212529;
+             background-color: #0d1b2a;
+             color: #f8f9fa;
              margin: 0;
              padding-bottom: 50px;
            }
@@ -358,16 +360,16 @@ def internal_error(error):
            }
            .card {
              border-radius: 10px;
-             background: #fff;
-             color: #212529;
-             box-shadow: 0 4px 8px rgba(0,0,0,0.1);
+             background: #1b263b;
+             color: #f8f9fa;
+             box-shadow: 0 4px 8px rgba(0,0,0,0.2);
            }
          </style>
       </head>
       <body>
          <div class="error-container">
             <div class="error-code">500</div>
-            <div class="card text-dark mb-3" style="max-width: 500px; margin-top: 20px;">
+            <div class="card text-light mb-3" style="max-width: 500px; margin-top: 20px;">
               <div class="card-body">
                 <p class="lead mb-0 text-center">Ops! Algo deu errado. Tente novamente ou contate o suporte.</p>
               </div>
@@ -541,14 +543,6 @@ def format_whatsapp(phone_str: str) -> str:
 # =============================================================================
 STREAMING_URL = os.getenv("STREAMING_URL", "https://www.youtube.com/channel/SEU_CANAL")
 IDIOMAS_SUPORTADOS = ["pt", "en", "es", "fr"]
-
-PALETA_OPCOES: Dict[str, Dict[str, str]] = {
-    "black_azul": {"nome": "Kartódromo MeuKart", "tema_primario": "#000000", "tema_secundario": "#007BFF"},
-    "modern": {"nome": "Kartódromo MeuKart", "tema_primario": "#1d3557", "tema_secundario": "#457b9d"},
-    "elegant": {"nome": "Kartódromo MeuKart", "tema_primario": "#2d3436", "tema_secundario": "#d63031"},
-    "vibrant": {"nome": "Kartódromo MeuKart", "tema_primario": "#00b894", "tema_secundario": "#0984e3"},
-}
-DEFAULT_TEMA: Dict[str, str] = PALETA_OPCOES["black_azul"].copy()
 
 # =============================================================================
 # ROTAS – INDEX
@@ -1198,7 +1192,7 @@ def change_password():
             <style>
               .password-meter-container {
                   height: 10px;
-                  background: #ddd;
+                  background: #495057;
                   border-radius: 5px;
                   margin-top: 5px;
               }
@@ -1834,7 +1828,7 @@ def piloto_campeonatos() -> str:
         cards_html += f"""
         <div class="col">
           <a href="/admin/campeonato/{camp_id}" style="text-decoration: none;">
-            <div class="p-3 text-center" style="border-left: 5px solid {border_color}; background: #fff; border-radius: 10px; box-shadow: 0 4px 8px rgba(0,0,0,0.1);">
+            <div class="p-3 text-center" style="border-left: 5px solid {border_color}; background: #1b263b; border-radius: 10px; box-shadow: 0 4px 8px rgba(0,0,0,0.2);">
               <h5 style="margin: 0; font-size: 1.5rem;"><i class="fas fa-medal"></i> {camp_name}</h5>
               <p style="margin: 10px 0 0;">Início: {data_inicio} <br>Tipo: {tipo}</p>
               <button class="btn btn-primary mt-2">{btn_text}</button>
@@ -2279,10 +2273,10 @@ def piloto_rankings():
        {BASE_CSS}
        <style>
          table.table-ranking {{
-            background-color: #fff;
+            background-color: #1b263b;
          }}
          table.table-ranking thead th {{
-            background-color: #e9ecef;
+            background-color: #343a40;
          }}
        </style>
     </head>
@@ -2483,7 +2477,7 @@ def piloto_comunidade():
            padding: 10px;
            height: 300px;
            overflow-y: auto;
-           background-color: #fff;
+           background-color: #1b263b;
          }}
          .chat-container {{
            max-width: 700px;
