@@ -4,6 +4,9 @@ import logging
 import uuid
 import secrets  # Para geração de senha aleatória
 import re       # Para manipulação do CPF e WhatsApp
+import threading
+import time
+import requests
 from functools import wraps
 from typing import Any, Dict, List
 
@@ -11,7 +14,7 @@ from markupsafe import Markup
 
 from flask import (
     Flask, request, jsonify, session, render_template_string,
-    redirect, url_for, flash, get_flashed_messages, send_from_directory
+    redirect, url_for, flash, get_flashed_messages, send_from_directory, abort
 )
 import pyotp  # se precisar de MFA
 from supabase import create_client, Client
@@ -23,14 +26,80 @@ from sendgrid.helpers.mail import Mail
 from werkzeug.security import generate_password_hash, check_password_hash
 from werkzeug.utils import secure_filename
 
-# -------------- IMPORTS ADICIONAIS PARA A MANUTENÇÃO DE INSTÂNCIA --------------
-import threading
-import time
-import requests
-
+# ----------------- ADIÇÃO PARA CSRF PROTECTION -----------------
+from flask_wtf.csrf import CSRFProtect, generate_csrf
 
 # =============================================================================
-# DECORADORES PERSONALIZADOS
+# CONFIGURAÇÃO INICIAL
+# =============================================================================
+load_dotenv()
+
+# -----------------------------------------------------------------------------
+# LOGGING COM NOME DE LOGGER
+# -----------------------------------------------------------------------------
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s [%(levelname)s] %(message)s",
+)
+
+logger = logging.getLogger(__name__)
+
+# -----------------------------------------------------------------------------
+# VARIÁVEIS DE AMBIENTE E CHECAGEM
+# -----------------------------------------------------------------------------
+SUPABASE_URL = os.getenv("SUPABASE_URL")
+SUPABASE_ANON_KEY = os.getenv("SUPABASE_ANON_KEY")
+SUPABASE_SERVICE_KEY = os.getenv("SUPABASE_SERVICE_KEY", "")
+
+if not SUPABASE_URL or not SUPABASE_ANON_KEY:
+    logger.error("Supabase URL e/ou Supabase ANON KEY não configurados. Verifique o .env.")
+    exit(1)
+
+SECRET_KEY = os.getenv("SECRET_KEY", "CHAVE_SECRETA_FLASK")
+# Se estiver em produção, ideal checar se SECRET_KEY está configurada adequadamente:
+if SECRET_KEY == "CHAVE_SECRETA_FLASK":
+    logger.warning("ATENÇÃO: Usando SECRET_KEY padrão. Em produção, configure SECRET_KEY via variável de ambiente.")
+
+# -----------------------------------------------------------------------------
+# CRIA O APP E CONFIGURA
+# -----------------------------------------------------------------------------
+app = Flask(__name__)
+app.secret_key = SECRET_KEY
+
+# Em produção, pode-se definir:
+app.config["SESSION_COOKIE_HTTPONLY"] = True
+app.config["SESSION_COOKIE_SECURE"] = True  # Requer HTTPS em produção
+
+# ----------------- ADIÇÃO PARA CSRF PROTECTION -----------------
+csrf = CSRFProtect(app)
+
+# MAX CONTENT LENGTH PARA LIMITAR UPLOADS (EXEMPLO: 2MB)
+app.config["MAX_CONTENT_LENGTH"] = 2 * 1024 * 1024
+
+# -----------------------------------------------------------------------------
+# CRIA O CLIENTE SUPABASE
+# -----------------------------------------------------------------------------
+if SUPABASE_SERVICE_KEY:
+    logger.info("Usando SUPABASE_SERVICE_KEY para criar o cliente Supabase.")
+    supabase: Client = create_client(SUPABASE_URL, SUPABASE_SERVICE_KEY)
+else:
+    logger.warning("SUPABASE_SERVICE_KEY não está configurada. Usando SUPABASE_ANON_KEY.")
+    supabase: Client = create_client(SUPABASE_URL, SUPABASE_ANON_KEY)
+
+# -----------------------------------------------------------------------------
+# SERIALIZER PARA TOKENS
+# -----------------------------------------------------------------------------
+serializer = URLSafeTimedSerializer(SECRET_KEY)
+
+# -----------------------------------------------------------------------------
+# PASTA DE UPLOAD (LOCAL)
+# -----------------------------------------------------------------------------
+UPLOAD_FOLDER = "uploads"
+os.makedirs(UPLOAD_FOLDER, exist_ok=True)
+app.config["UPLOAD_FOLDER"] = UPLOAD_FOLDER
+
+# =============================================================================
+# DECORADORES PERSONALIZADOS ( Poderiam ir em outro arquivo, mas aqui está ok )
 # =============================================================================
 def login_required(f):
     @wraps(f)
@@ -50,46 +119,23 @@ def admin_required(f):
         return f(*args, **kwargs)
     return decorated_function
 
-# =============================================================================
-# CONFIGURAÇÃO E LOGGING
-# =============================================================================
-load_dotenv()
+# -----------------------------------------------------------------------------
+# FUNÇÃO AUXILIAR DE ARQUIVOS
+# -----------------------------------------------------------------------------
+ALLOWED_EXTENSIONS = {"png", "jpg", "jpeg", "gif"}
 
-logging.basicConfig(
-    level=logging.INFO,
-    format="%(asctime)s [%(levelname)s] %(message)s",
-)
+def allowed_file(filename: str) -> bool:
+    return "." in filename and filename.rsplit(".", 1)[1].lower() in ALLOWED_EXTENSIONS
 
-SUPABASE_URL = os.getenv("SUPABASE_URL")
-SUPABASE_ANON_KEY = os.getenv("SUPABASE_ANON_KEY")
-SUPABASE_SERVICE_KEY = os.getenv("SUPABASE_SERVICE_KEY", "")
-
-if not SUPABASE_URL or not SUPABASE_ANON_KEY:
-    logging.error("Supabase URL e/ou Supabase ANON KEY não configurados. Verifique o .env")
-    exit(1)
-
-if SUPABASE_SERVICE_KEY:
-    logging.info("Usando SUPABASE_SERVICE_KEY para criar o cliente Supabase.")
-    supabase: Client = create_client(SUPABASE_URL, SUPABASE_SERVICE_KEY)
-else:
-    logging.warning("SUPABASE_SERVICE_KEY não está configurada. Usando SUPABASE_ANON_KEY.")
-    supabase: Client = create_client(SUPABASE_URL, SUPABASE_ANON_KEY)
-
-SECRET_KEY = os.getenv("SECRET_KEY", "CHAVE_SECRETA_FLASK")
-app = Flask(__name__)
-app.secret_key = SECRET_KEY
-
-# Em produção, você pode definir SESSION_COOKIE_SECURE=True (exige HTTPS)
-app.config["SESSION_COOKIE_HTTPONLY"] = True
-app.config["SESSION_COOKIE_SECURE"] = True  # Ajuste para produção com HTTPS
-
-# Serializer para tokens (para redefinição de senha, exclusão de perfil, etc.)
-serializer = URLSafeTimedSerializer(SECRET_KEY)
-
-# Pasta de upload (local). Certifique-se de criar a pasta "uploads" na raiz.
-UPLOAD_FOLDER = "uploads"
-os.makedirs(UPLOAD_FOLDER, exist_ok=True)
-app.config["UPLOAD_FOLDER"] = UPLOAD_FOLDER
+# -----------------------------------------------------------------------------
+# CONTEXT PROCESSOR PARA INSERIR O TOKEN CSRF NO TEMPLATE
+# -----------------------------------------------------------------------------
+@app.context_processor
+def inject_csrf():
+    """
+    Permite usar {{ csrf_token() }} dentro dos templates.
+    """
+    return dict(csrf_token=generate_csrf)
 
 # =============================================================================
 # BEFORE REQUEST – Captura de tenant (kart_id)
@@ -128,8 +174,6 @@ def add_security_headers(response):
 # =============================================================================
 # COMPONENTES VISUAIS – BASE CSS, Navbar, Breadcrumbs, Toasts, Preloader e Loading
 # =============================================================================
-
-# Atualizado para utilizar o tema Darkly do Bootswatch com interface azul escuro
 FA_CDN = '<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0-beta3/css/all.min.css">'
 
 PALETA_OPCOES: Dict[str, Dict[str, str]] = {
@@ -233,7 +277,7 @@ NAVBAR_HTML = """
 TOAST_CONTAINER = """
 <div aria-live="polite" aria-atomic="true" class="position-fixed top-0 end-0 p-3" style="z-index: 1050;">
   {% for category, message in get_flashed_messages(with_categories=True) %}
-  <div class="toast align-items-center text-white bg-{% if category=='danger' or category=='warning' %}danger{% else %}success{% endif %} border-0 mb-2" role="alert" aria-live="assertive" aria-atomic="true">
+  <div class="toast align-items-center text-white bg-{% if category=='danger' or category=='warning' %}danger{% else %}success{% endif %} border-0 mb-2" role="alert" aria-live="assertive" aria-atomic="true" data-bs-delay="5000">
     <div class="d-flex">
       <div class="toast-body">
         {{ message }}
@@ -334,7 +378,7 @@ def not_found_error(error):
 
 @app.errorhandler(500)
 def internal_error(error):
-    logging.error(f"Erro interno: {error}")
+    logger.error(f"Erro interno: {error}")
     return render_template_string("""
       <!DOCTYPE html>
       <html lang="pt">
@@ -415,7 +459,7 @@ def checa_inscricoes_fechadas(campeonato: Dict[str, Any]) -> bool:
         if status_resp.data and status_resp.data[0].get("status") == "fechado":
             return True
     except Exception as e:
-        logging.warning(f"Erro ao checar status manual: {e}")
+        logger.warning(f"Erro ao checar status manual: {e}")
 
     data_fech = campeonato.get("data_fechamento_inscricoes")
     if data_fech:
@@ -424,7 +468,7 @@ def checa_inscricoes_fechadas(campeonato: Dict[str, Any]) -> bool:
             if datetime.datetime.now() >= dt_fech:
                 return True
         except Exception as e:
-            logging.warning(f"Erro ao converter data de fechamento: {e}")
+            logger.warning(f"Erro ao converter data de fechamento: {e}")
 
     try:
         bat_resp = tenant_table("baterias_kart_1").select("data_hora_inicio").eq("campeonato_id", campeonato["id"]).order("data_hora_inicio").execute()
@@ -435,9 +479,8 @@ def checa_inscricoes_fechadas(campeonato: Dict[str, Any]) -> bool:
                 dt_primeira = parse_date(primeira_bateria)
                 if datetime.datetime.now() >= dt_primeira:
                     return True
-        # Se já atingiu o número máximo
     except Exception as e:
-        logging.warning(f"Erro ao checar baterias: {e}")
+        logger.warning(f"Erro ao checar baterias: {e}")
 
     try:
         part_resp = tenant_table("participacoes").select("user_id").eq("campeonato_id", campeonato["id"]).execute()
@@ -445,7 +488,7 @@ def checa_inscricoes_fechadas(campeonato: Dict[str, Any]) -> bool:
         if inscritos and len(inscritos) >= campeonato.get("max_participantes", 0):
             return True
     except Exception as e:
-        logging.warning(f"Erro ao checar max_participantes: {e}")
+        logger.warning(f"Erro ao checar max_participantes: {e}")
 
     return False
 
@@ -457,7 +500,7 @@ def contar_baterias(campeonato_id: str) -> (int, int):
         total = len(baterias)
         return (feitas, total - feitas)
     except Exception as e:
-        logging.warning(f"Erro ao contar baterias: {e}")
+        logger.warning(f"Erro ao contar baterias: {e}")
         return (0, 0)
 
 def get_camp_status(campeonato: Dict[str, Any]) -> str:
@@ -465,7 +508,7 @@ def get_camp_status(campeonato: Dict[str, Any]) -> str:
     try:
         dt_inicio = parse_date(campeonato.get("data_inicio"))
     except Exception as e:
-        logging.warning(f"Erro ao converter data_inicio: {e}")
+        logger.warning(f"Erro ao converter data_inicio: {e}")
         return "Aberto"
     try:
         data_fim_cad = campeonato.get("data_fim")
@@ -473,7 +516,7 @@ def get_camp_status(campeonato: Dict[str, Any]) -> str:
             return "Em Andamento" if now >= dt_inicio else "Aberto"
         dt_fim = parse_date(data_fim_cad)
     except Exception as e:
-        logging.warning(f"Erro ao converter data_fim: {e}")
+        logger.warning(f"Erro ao converter data_fim: {e}")
         return "Em Andamento" if now >= dt_inicio else "Aberto"
 
     if now < dt_inicio:
@@ -505,7 +548,7 @@ def atualiza_status_baterias(baterias: List[Dict[str, Any]]) -> None:
                 tenant_table("baterias_kart_1").update({"status": new_status}).eq("id", bat["id"]).execute()
                 bat["status"] = new_status
         except Exception as e:
-            logging.warning(f"Erro ao atualizar status da bateria {bat.get('id')}: {e}")
+            logger.warning(f"Erro ao atualizar status da bateria {bat.get('id')}: {e}")
 
 def format_cpf(cpf_str: str) -> str:
     digits = re.sub(r'\D', '', cpf_str)
@@ -611,6 +654,7 @@ login_template = """
               <div class="card-body">
                   <h1 class="text-center mb-4">Login</h1>
                   <form action="/login" method="POST">
+                      <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
                       <div class="mb-3 text-start">
                           <label for="email" class="form-label">Email:</label>
                           <input type="email" name="email" id="email" class="form-control" required>
@@ -671,7 +715,7 @@ def login_get():
         flash("Login realizado com sucesso!", "success")
         return redirect(url_for("select_role"))
     except Exception as e:
-        logging.error(f"Erro durante o login: {e}")
+        logger.error(f"Erro durante o login: {e}")
         flash("Ocorreu um erro durante o login. Por favor, tente novamente ou contate o suporte.", "danger")
         return redirect(url_for("login_get"))
 
@@ -709,6 +753,7 @@ def recover_password():
                   <div class="card-body">
                     <h1 class="text-center mb-4">Recuperar Senha</h1>
                     <form action="/recover_password" method="POST">
+                      <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
                       <div class="mb-3 text-start">
                         <label for="email" class="form-label">Digite seu email:</label>
                         <input type="email" name="email" id="email" class="form-control" required>
@@ -758,7 +803,7 @@ def recover_password():
         message = Mail(from_email=from_email, to_emails=email, subject=subject, plain_text_content=content)
         response = sg.send(message)
 
-        logging.info(f"Email de redefinição de senha enviado para {email} (status: {response.status_code}).")
+        logger.info(f"Email de redefinição de senha enviado para {email} (status: {response.status_code}).")
         if response.status_code < 400:
             flash(f"Um email com instruções foi enviado para {email}.", "success")
         else:
@@ -766,7 +811,7 @@ def recover_password():
 
         return redirect(url_for("login_get"))
     except Exception as e:
-        logging.error(f"Erro no processo de redefinição de senha: {e}")
+        logger.error(f"Erro no processo de redefinição de senha: {e}")
         flash("Erro durante a solicitação de redefinição de senha. Por favor, tente novamente.", "danger")
         return redirect(request.url)
 
@@ -800,6 +845,7 @@ def reset_password(token: str):
                   <div class="card-body">
                     <h1 class="text-center mb-4">Redefinir Senha</h1>
                     <form action="/reset_password/{{ token }}" method="POST">
+                      <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
                       <div class="mb-3">
                         <label for="new_password" class="form-label">Nova Senha:</label>
                         <input type="password" name="new_password" id="new_password" class="form-control" required>
@@ -840,7 +886,7 @@ def reset_password(token: str):
         flash("Senha redefinida com sucesso! Faça login com sua nova senha.", "success")
         return redirect(url_for("login_get"))
     except Exception as e:
-        logging.error(f"Erro ao redefinir senha: {e}")
+        logger.error(f"Erro ao redefinir senha: {e}")
         flash("Erro ao redefinir senha. Por favor, tente novamente.", "danger")
         return redirect(url_for("reset_password", token=token))
 
@@ -863,6 +909,7 @@ registration_template = """
           <div class="card-body">
             <h1 class="text-center mb-4">Cadastrar-se</h1>
             <form action="/register" method="POST">
+              <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
               <div class="mb-3 text-start">
                 <label for="nome" class="form-label">Nome Completo:</label>
                 <input type="text" name="nome" id="nome" class="form-control" value="{{ nome|default('') }}" required>
@@ -1061,7 +1108,7 @@ def register_route() -> Any:
         flash("Cadastro realizado com sucesso! Por favor, faça login.", "success")
         return redirect(url_for("login_get"))
     except Exception as e:
-        logging.error(f"Erro durante o cadastro: {e}")
+        logger.error(f"Erro durante o cadastro: {e}")
         flash("Ocorreu um erro durante o cadastro. Verifique os dados informados ou contate o suporte.", "danger")
         return redirect(request.url)
 
@@ -1138,6 +1185,7 @@ def recover_email():
                       <div class="card-body">
                         <h1 class="text-center mb-4">Recuperar Email</h1>
                         <form action="/recover_email" method="POST">
+                          <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
                           <div class="mb-3 text-start">
                             <label for="cpf" class="form-label">Digite seu CPF:</label>
                             <input type="text" name="cpf" id="cpf" class="form-control" required>
@@ -1219,6 +1267,7 @@ def change_password():
                 <div class="col-12 col-md-8 col-lg-6">
                   <h1 class="text-center mb-4">Alterar Senha</h1>
                   <form method="POST">
+                     <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
                      <div class="mb-3">
                        <label for="current_password" class="form-label">Senha Atual:</label>
                        <input type="password" name="current_password" id="current_password" class="form-control" required>
@@ -1308,7 +1357,7 @@ def change_password():
         flash("Senha alterada com sucesso!", "success")
         return redirect(url_for("dashboard_full"))
     except Exception as e:
-        logging.error(f"Erro ao alterar senha: {e}")
+        logger.error(f"Erro ao alterar senha: {e}")
         flash("Erro ao alterar senha. Por favor, tente novamente.", "danger")
         return redirect(url_for("change_password"))
 
@@ -1341,12 +1390,12 @@ def send_delete_confirmation_email(to_email: str, token: str, user_name: str):
 
         message = Mail(from_email=from_email, to_emails=to_email, subject=subject, plain_text_content=content)
         response = sg.send(message)
-        logging.info(f"Email de exclusão enviado para {to_email} (status: {response.status_code}).")
+        logger.info(f"Email de exclusão enviado para {to_email} (status: {response.status_code}).")
         if response.status_code >= 400:
             raise Exception("Erro ao enviar email de confirmação de exclusão")
         return response
     except Exception as e:
-        logging.error(f"Erro ao enviar email de exclusão: {e}")
+        logger.error(f"Erro ao enviar email de exclusão: {e}")
         raise
 
 @app.route("/delete_profile", methods=["GET", "POST"])
@@ -1360,7 +1409,7 @@ def delete_profile():
             return redirect(url_for("piloto_perfil"))
         user_profile = profile_resp.data[0]
     except Exception as e:
-        logging.error(f"Erro ao buscar perfil para exclusão: {e}")
+        logger.error(f"Erro ao buscar perfil para exclusão: {e}")
         flash("Erro ao buscar perfil.", "danger")
         return redirect(url_for("piloto_perfil"))
 
@@ -1375,7 +1424,7 @@ def delete_profile():
         </head>
         <body>
             {get_navbar()}
-            {{ toast_container|safe }}
+            {{{{ toast_container|safe }}}}
             <div class="container my-5" style="max-width: 500px;">
                 <div class="card p-4 text-center">
                     <div class="card-body">
@@ -1400,6 +1449,7 @@ def delete_profile():
                   </div>
                   <div class="modal-footer">
                     <form method="POST">
+                      <input type="hidden" name="csrf_token" value="{{{{ csrf_token() }}}}">
                       <button type="submit" class="btn btn-danger btn-submit">Sim, excluir meu perfil</button>
                     </form>
                     <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancelar</button>
@@ -1407,7 +1457,7 @@ def delete_profile():
                 </div>
               </div>
             </div>
-            {{ global_loading|safe }}
+            {{{{ global_loading|safe }}}}
             <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.2.3/dist/js/bootstrap.bundle.min.js"></script>
         </body>
         </html>
@@ -1422,7 +1472,7 @@ def delete_profile():
             send_delete_confirmation_email(user_profile["email"], token, user_profile["nome"])
             flash("Email de confirmação enviado. Verifique seu email para confirmar a exclusão do perfil.", "success")
         except Exception as e:
-            logging.error(f"Erro ao enviar email de confirmação para exclusão: {e}")
+            logger.error(f"Erro ao enviar email de confirmação para exclusão: {e}")
             flash("Erro ao enviar email de confirmação. Por favor, tente novamente.", "danger")
 
         return redirect(url_for("piloto_perfil"))
@@ -1439,7 +1489,7 @@ def confirm_delete(token: str):
         session.clear()
         flash("Seu perfil foi excluído com sucesso.", "success")
     except Exception as e:
-        logging.error(f"Erro ao excluir perfil: {e}")
+        logger.error(f"Erro ao excluir perfil: {e}")
         flash("Erro ao excluir perfil. Por favor, tente novamente.", "danger")
         return redirect(url_for("piloto_perfil"))
 
@@ -1460,7 +1510,7 @@ def atualizar_pontos_piloto(user_id: str):
                 total += calculate_battery_points(pos)
         tenant_table("profiles").update({"pontos": total}).eq("id", user_id).execute()
     except Exception as e:
-        logging.error(f"Erro ao atualizar pontos do piloto: {e}")
+        logger.error(f"Erro ao atualizar pontos do piloto: {e}")
 
 @app.route("/inscrever", methods=["POST"])
 def inscrever_piloto() -> Any:
@@ -1659,7 +1709,7 @@ def dashboard_full() -> str:
         if bat_resp.data:
             atualiza_status_baterias(bat_resp.data)
     except Exception as e:
-        logging.warning(f"Erro ao atualizar baterias no dashboard: {e}")
+        logger.warning(f"Erro ao atualizar baterias no dashboard: {e}")
 
     try:
         campeonatos_resp = tenant_table("campeonatos_kart_1").select("id, nome, data_inicio, data_fim").execute()
@@ -1984,7 +2034,7 @@ def piloto_perfil():
             session["user_name"] = nome
             flash("Perfil atualizado com sucesso!", "success")
         except Exception as e:
-            logging.error(f"Erro ao atualizar perfil: {e}")
+            logger.error(f"Erro ao atualizar perfil: {e}")
             flash("Erro ao atualizar perfil. Tente novamente ou contate o suporte.", "danger")
 
         return redirect(url_for("piloto_perfil"))
@@ -1993,7 +2043,7 @@ def piloto_perfil():
         profile_resp = tenant_table("profiles").select("*").eq("id", user_id).execute()
         profile = profile_resp.data[0] if profile_resp.data else {}
     except Exception as e:
-        logging.error(f"Erro ao buscar perfil: {e}")
+        logger.error(f"Erro ao buscar perfil: {e}")
         flash("Erro ao buscar perfil.", "danger")
         profile = {}
 
@@ -2013,6 +2063,7 @@ def piloto_perfil():
            <div class="col-12 col-md-8 col-lg-6">
              <h1 class="mb-4 text-center">Editar Perfil</h1>
              <form method="POST">
+               <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
                <div class="mb-3">
                  <label for="nome" class="form-label">Nome:</label>
                  <input type="text" name="nome" id="nome" class="form-control" value="{profile.get("nome", "")}" required>
@@ -2058,8 +2109,17 @@ def piloto_conteudo_endpoint() -> str:
 
         filename_saved = None
         if media_file and media_file.filename:
+            if not allowed_file(media_file.filename):
+                flash("Tipo de arquivo não permitido. Envie apenas imagens (png, jpg, jpeg, gif).", "danger")
+                return redirect(url_for("piloto_conteudo_endpoint"))
+
             filename_saved = secure_filename(media_file.filename)
-            media_file.save(os.path.join(app.config["UPLOAD_FOLDER"], filename_saved))
+            try:
+                media_file.save(os.path.join(app.config["UPLOAD_FOLDER"], filename_saved))
+            except Exception as e:
+                logger.error(f"Erro ao salvar arquivo: {e}")
+                flash("Erro ao salvar arquivo. Tente novamente.", "danger")
+                return redirect(url_for("piloto_conteudo_endpoint"))
 
         user_id = session.get("user_id")
         content_data = {
@@ -2073,7 +2133,7 @@ def piloto_conteudo_endpoint() -> str:
             tenant_table("conteudos").insert(content_data).execute()
             flash("Conteúdo publicado com sucesso!", "success")
         except Exception as e:
-            logging.error(f"Erro ao publicar conteúdo: {e}")
+            logger.error(f"Erro ao publicar conteúdo: {e}")
             flash("Erro ao salvar conteúdo. Tente novamente mais tarde.", "danger")
 
         return redirect(url_for("piloto_conteudo_endpoint"))
@@ -2100,6 +2160,7 @@ def piloto_conteudo_endpoint() -> str:
                </div>
              </div>
              <form method="POST" enctype="multipart/form-data">
+                 <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
                  <div class="mb-3 text-start">
                    <label for="post_title" class="form-label">Título do Post:</label>
                    <input type="text" class="form-control" id="post_title" name="post_title" required>
@@ -2563,7 +2624,7 @@ def admin_campeonato_detail(camp_id):
             tenant_table("campeonatos_kart_1").update(update_data).eq("id", camp_id).execute()
             flash("Campeonato atualizado com sucesso!", "success")
         except Exception as e:
-            logging.error(f"Erro ao atualizar campeonato: {e}")
+            logger.error(f"Erro ao atualizar campeonato: {e}")
             flash("Erro ao atualizar campeonato.", "danger")
         return redirect(url_for("admin_campeonato_detail", camp_id=camp_id))
 
@@ -2577,7 +2638,7 @@ def admin_campeonato_detail(camp_id):
         bat_resp = tenant_table("baterias_kart_1").select("*").eq("campeonato_id", camp_id).execute()
         baterias = bat_resp.data or []
     except Exception as e:
-        logging.error(f"Erro ao buscar campeonato: {e}")
+        logger.error(f"Erro ao buscar campeonato: {e}")
         flash("Erro ao buscar campeonato.", "danger")
         return redirect(url_for("admin_home"))
 
@@ -2595,6 +2656,7 @@ def admin_campeonato_detail(camp_id):
       <div class="container my-5">
         <h1 class="mb-4">Detalhes do Campeonato: {{ campeonato["nome"] }}</h1>
         <form method="POST">
+          <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
           <div class="mb-3">
             <label for="nome" class="form-label">Nome:</label>
             <input type="text" class="form-control" name="nome" id="nome" value="{{ campeonato["nome"] }}">
@@ -2653,7 +2715,7 @@ def list_teams():
         resp = tenant_table("teams").select("*").execute()
         teams = resp.data or []
     except Exception as e:
-        logging.error(f"Erro ao buscar teams: {e}")
+        logger.error(f"Erro ao buscar teams: {e}")
         teams = []
 
     html = f"""
@@ -2695,7 +2757,7 @@ def create_team():
             tenant_table("teams").insert({"team_name": team_name, "kartodromo_id": session.get("kartodromo_id")}).execute()
             flash("Time criado com sucesso!", "success")
         except Exception as e:
-            logging.error(f"Erro ao criar time: {e}")
+            logger.error(f"Erro ao criar time: {e}")
             flash("Erro ao criar time.", "danger")
         return redirect(url_for("list_teams"))
 
@@ -2713,6 +2775,7 @@ def create_team():
       <div class="container my-5">
         <h1 class="mb-4">Criar Novo Time</h1>
         <form method="POST">
+          <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
           <div class="mb-3">
             <label for="team_name" class="form-label">Nome do Time:</label>
             <input type="text" class="form-control" id="team_name" name="team_name" required>
@@ -2738,7 +2801,6 @@ def ping():
     """Rota simples que retorna 'pong' - usada pelo keep-alive."""
     return "pong", 200
 
-
 # =============================================================================
 # THREAD KEEP-ALIVE: MANTER A INSTÂNCIA ACORDADA
 # =============================================================================
@@ -2751,11 +2813,13 @@ def keep_alive():
         try:
             time.sleep(60 * 5)  # A cada 5 minutos
             requests.get(ping_url, timeout=5)
-            logging.info("Keep-Alive: ping enviado com sucesso.")
+            logger.info("Keep-Alive: ping enviado com sucesso.")
         except Exception as e:
-            logging.error(f"Keep-Alive: erro ao enviar ping -> {e}")
+            logger.error(f"Keep-Alive: erro ao enviar ping -> {e}")
 
-
+# =============================================================================
+# MAIN
+# =============================================================================
 if __name__ == "__main__":
     # Inicia a thread de keep-alive em segundo plano
     threading.Thread(target=keep_alive, daemon=True).start()
