@@ -624,6 +624,9 @@ login_template = """
                       <a href="/recover_password">Esqueci minha senha</a> | 
                       <a href="/register">Não possui conta? Cadastre-se</a>
                   </div>
+                  <div class="mt-3 text-center">
+                      <a href="/" class="btn btn-secondary">Voltar</a>
+                  </div>
               </div>
           </div>
         </div>
@@ -712,7 +715,7 @@ def recover_password():
                       <button type="submit" class="btn btn-primary btn-lg w-100 btn-submit">Solicitar Redefinição</button>
                     </form>
                     <div class="mt-3 text-center">
-                      <a href="/login">Voltar para Login</a>
+                      <a href="/login" class="btn btn-secondary">Voltar para Login</a>
                     </div>
                   </div>
                 </div>
@@ -806,6 +809,9 @@ def reset_password(token: str):
                       </div>
                       <button type="submit" class="btn btn-primary w-100 btn-submit">Redefinir Senha</button>
                     </form>
+                    <div class="mt-3 text-center">
+                      <a href="/login" class="btn btn-secondary">Voltar</a>
+                    </div>
                   </div>
                 </div>
               </div>
@@ -884,6 +890,9 @@ registration_template = """
             </form>
             <div class="mt-3 text-center">
               <a href="/login">Já possui conta? Faça login</a>
+            </div>
+            <div class="mt-3 text-center">
+              <a href="/" class="btn btn-secondary">Voltar</a>
             </div>
           </div>
         </div>
@@ -1135,7 +1144,7 @@ def recover_email():
                           <button type="submit" class="btn btn-primary btn-lg btn-submit">Recuperar Email</button>
                         </form>
                         <div class="mt-3 text-center">
-                          <a href="/login">Voltar para Login</a>
+                          <a href="/login" class="btn btn-secondary">Voltar para Login</a>
                         </div>
                       </div>
                     </div>
@@ -1227,6 +1236,9 @@ def change_password():
                      </div>
                      <button type="submit" class="btn btn-primary w-100 btn-submit">Alterar Senha</button>
                   </form>
+                  <div class="mt-3 text-center">
+                    <a href="/piloto/dashboard" class="btn btn-secondary w-100">Voltar</a>
+                  </div>
                 </div>
               </div>
             </div>
@@ -1998,7 +2010,7 @@ def piloto_perfil():
        <div class="container my-5">
          <div class="row justify-content-center">
            <div class="col-12 col-md-8 col-lg-6">
-             <h1 class="mb-4">Editar Perfil</h1>
+             <h1 class="mb-4 text-center">Editar Perfil</h1>
              <form method="POST">
                <div class="mb-3">
                  <label for="nome" class="form-label">Nome:</label>
