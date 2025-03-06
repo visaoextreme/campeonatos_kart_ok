@@ -24,6 +24,27 @@ from werkzeug.security import generate_password_hash, check_password_hash
 from werkzeug.utils import secure_filename
 
 # =============================================================================
+# DECORADORES PERSONALIZADOS
+# =============================================================================
+def login_required(f):
+    @wraps(f)
+    def decorated_function(*args, **kwargs):
+        if not session.get("user_id"):
+            flash("Você precisa estar logado para acessar esta página.", "warning")
+            return redirect(url_for("login_get"))
+        return f(*args, **kwargs)
+    return decorated_function
+
+def admin_required(f):
+    @wraps(f)
+    def decorated_function(*args, **kwargs):
+        if session.get("role") != "admin":
+            flash("Acesso negado. Esta área é restrita para administradores.", "danger")
+            return redirect(url_for("index"))
+        return f(*args, **kwargs)
+    return decorated_function
+
+# =============================================================================
 # CONFIGURAÇÃO E LOGGING
 # =============================================================================
 load_dotenv()
